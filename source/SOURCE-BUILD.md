@@ -1,4 +1,4 @@
-# Build FLICK 1.0.0
+# Build FLICK 1.0.1
 
 From the repository root, run `cd source` before the commands below.
 
@@ -10,14 +10,14 @@ recordings and local preferences are excluded.
 
 1. In MSYS2 UCRT64, run `bash prepare-gold-deps.sh`. It checks pinned hashes,
    extracts packaged dependencies, builds x264 and installs NVIDIA headers.
-2. In PowerShell, run `./build-gold.ps1 -OutputDirectory C:/build/FLICK-1.0.0`.
+2. In PowerShell, run `./build-gold.ps1 -OutputDirectory C:/build/FLICK-1.0.1`.
    Set `-MsysRoot` and `-DotNet` if needed. This builds native tools into a fresh
    directory, embeds their hashes, then publishes a self-contained Windows x64 app.
    Existing canonical tools are never overwritten.
 3. To rebuild only the managed application using already prepared tools:
 
    ```powershell
-   dotnet publish FLICK.csproj -c Release -r win-x64 --self-contained true -o C:/build/FLICK-1.0.0
+   dotnet publish FLICK.csproj -c Release -r win-x64 --self-contained true -o C:/build/FLICK-1.0.1
    ```
 
 The baseline worker, profile worker and editor tools use distinct configuration
