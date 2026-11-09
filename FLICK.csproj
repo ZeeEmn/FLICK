@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget><RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained><PublishTrimmed>false</PublishTrimmed>
+    <Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>FLICK</AssemblyName><Product>FLICK</Product><Version>1.0.0</Version>
+    <DebugType>none</DebugType><DebugSymbols>false</DebugSymbols>
+    <Deterministic>true</Deterministic><ApplicationIcon>Assets\flick.ico</ApplicationIcon>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**;gold-deps/**;release-tools/**;installer/**</DefaultItemExcludes>
+    <ReleaseToolsDirectory Condition="'$(ReleaseToolsDirectory)' == ''">$(MSBuildProjectDirectory)/release-tools</ReleaseToolsDirectory>
+    <ProfileToolsDirectory Condition="'$(ProfileToolsDirectory)' == ''">$(MSBuildProjectDirectory)/profile-tools/v1.3.1</ProfileToolsDirectory>
+    <BridgeToolsDirectory Condition="'$(BridgeToolsDirectory)' == ''">$(MSBuildProjectDirectory)/bridge-tools/v1.3.1</BridgeToolsDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="GoldToolHashes.json" LogicalName="Rewind.GoldToolHashes.json" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <Resource Include="Assets\Fonts\*.ttf" />
+    <Content Include="Assets\flick.ico;Assets\flick.png" CopyToOutputDirectory="PreserveNewest" />
+    <ReleaseVideoTool Include="$(ReleaseToolsDirectory)/flick-transcoder.exe;$(ProfileToolsDirectory)/flick-profile-capture.exe;$(ReleaseToolsDirectory)/flick-screenshot.exe;$(ReleaseToolsDirectory)/ffmpeg.exe;$(ReleaseToolsDirectory)/ffprobe.exe;$(ReleaseToolsDirectory)/rewind-desktop-capture.exe;$(BridgeToolsDirectory)/rewind_desktop_bridge.dll" />
+    <Content Include="@(ReleaseVideoTool)" Link="tools/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RequireVideoTools" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('%(ReleaseVideoTool.Identity)')" Text="Release video tool missing: %(ReleaseVideoTool.Identity). See SOURCE-BUILD.md." />
+  </Target>
+</Project>

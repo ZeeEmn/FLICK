@@ -1,0 +1,145 @@
+--- a/libavfilter/vf_scale_d3d11.c
++++ b/libavfilter/vf_scale_d3d11.c
+@@ -22,6 +22,7 @@
+  */
+ 
+ #include "libavutil/opt.h"
++#include "libavutil/mem.h"
+ #include "libavutil/pixdesc.h"
+ #include "compat/w32dlfcn.h"
+ 
+@@ -58,6 +59,35 @@
+     DXGI_FORMAT input_format;
+     DXGI_FORMAT output_format;
+ } ScaleD3D11Context;
++
++/* Keep the capture AVFrame leased until the queued video-processor read completes.
++ * This affects only the optional downscale stage, never the source queue protocol. */
++typedef struct FlickScaleLease {
++    AVFrame *input;
++    ID3D11Query *done;
++    ID3D11DeviceContext *context;
++} FlickScaleLease;
++
++static void flick_scale_release(void *opaque, uint8_t *data)
++{
++    FlickScaleLease *lease = (FlickScaleLease *)data;
++    HRESULT hr;
++    AVHWFramesContext *frames = (AVHWFramesContext *)lease->input->hw_frames_ctx->data;
++    AVD3D11VADeviceContext *hw = ((AVHWDeviceContext *)frames->device_ref->data)->hwctx;
++    /* GetData submits pending commands. Waiting happens in the worker, not the UI
++     * or acquisition thread; it prevents recycling a source texture still in use. */
++    do {
++        hw->lock(hw->lock_ctx);
++        hr = lease->context->lpVtbl->GetData(lease->context,
++            (ID3D11Asynchronous *)lease->done, NULL, 0, 0);
++        hw->unlock(hw->lock_ctx);
++        if (hr == S_FALSE) Sleep(1);
++    } while (hr == S_FALSE);
++    lease->done->lpVtbl->Release(lease->done);
++    lease->context->lpVtbl->Release(lease->context);
++    av_frame_free(&lease->input);
++    av_free(lease);
++}
+ 
+ static av_cold int scale_d3d11_init(AVFilterContext *ctx) {
+     ///< all real work is done in config_props and filter_frame
+@@ -153,8 +183,11 @@
+     ID3D11VideoProcessorInputView *inputView = NULL;
+     ID3D11VideoContext *videoContext = NULL;
+     AVFrame *out = NULL;
++    FlickScaleLease *lease = NULL;
++    AVBufferRef *lease_ref = NULL;
+     int ret = 0;
+     HRESULT hr;
++    AVD3D11VADeviceContext *locked_hw = NULL;
+ 
+     ///< Validate input frame
+     if (!in) {
+@@ -200,6 +233,8 @@
+         goto fail;
+     }
+ 
++    locked_hw = ((AVHWDeviceContext *)s->hw_device_ctx->data)->hwctx;
++    locked_hw->lock(locked_hw->lock_ctx);
+     ///< Configure the D3D11 video processor if not already configured
+     if (!s->processor) {
+         ///< Get info from input texture
+@@ -223,7 +258,7 @@
+     int subIdx = (int)(intptr_t)in->data[1];
+ 
+     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC inputViewDesc = {
+-        .FourCC = s->input_format,
++        .FourCC = 0,
+         .ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D,
+         .Texture2D.ArraySlice = subIdx
+     };
+@@ -266,6 +301,15 @@
+         goto fail;
+     }
+ 
++    lease = av_mallocz(sizeof(*lease));
++    if (!lease) { ret = AVERROR(ENOMEM); goto fail; }
++    lease->input = av_frame_clone(in);
++    if (!lease->input) { ret = AVERROR(ENOMEM); goto fail; }
++    D3D11_QUERY_DESC query_desc = { .Query = D3D11_QUERY_EVENT };
++    hr = s->device->lpVtbl->CreateQuery(s->device, &query_desc, &lease->done);
++    if (FAILED(hr)) { ret = AVERROR_EXTERNAL; goto fail; }
++    lease->context = s->context;
++    lease->context->lpVtbl->AddRef(lease->context);
+     ///< Process the frame
+     hr = videoContext->lpVtbl->VideoProcessorBlt(videoContext, s->processor, s->outputView, 0, 1, &stream);
+     if (FAILED(hr)) {
+@@ -274,6 +318,15 @@
+         goto fail;
+     }
+ 
++    s->context->lpVtbl->End(s->context, (ID3D11Asynchronous *)lease->done);
++    lease_ref = av_buffer_create((uint8_t *)lease, sizeof(*lease), flick_scale_release, NULL, 0);
++    if (!lease_ref) {
++        locked_hw->unlock(locked_hw->lock_ctx); locked_hw = NULL;
++        flick_scale_release(NULL, (uint8_t *)lease); lease = NULL;
++        ret = AVERROR(ENOMEM); goto fail;
++    }
++    lease = NULL;
++    locked_hw->unlock(locked_hw->lock_ctx); locked_hw = NULL;
+     ///< Set up output frame
+     ret = av_frame_copy_props(out, in);
+     if (ret < 0) {
+@@ -287,6 +340,9 @@
+     out->height = s->height;
+     out->format = AV_PIX_FMT_D3D11;
+ 
++    /* opaque_ref belongs to the FFmpeg CLI scheduler; retain it untouched. */
++    if (out->buf[1]) { ret = AVERROR_BUG; goto fail; }
++    out->buf[1] = lease_ref; lease_ref = NULL;
+     ///< Clean up resources
+     inputView->lpVtbl->Release(inputView);
+     videoContext->lpVtbl->Release(videoContext);
+@@ -300,6 +356,13 @@
+     return ff_filter_frame(outlink, out);
+ 
+ fail:
++    if (locked_hw) locked_hw->unlock(locked_hw->lock_ctx);
++    av_buffer_unref(&lease_ref);
++    if (lease) {
++        if (lease->done) lease->done->lpVtbl->Release(lease->done);
++        if (lease->context) lease->context->lpVtbl->Release(lease->context);
++        av_frame_free(&lease->input); av_free(lease);
++    }
+     if (inputView)
+         inputView->lpVtbl->Release(inputView);
+     if (videoContext)
+@@ -373,10 +436,8 @@
+     frames_ctx->sw_format = s->format;
+     frames_ctx->width = s->width;
+     frames_ctx->height = s->height;
+-    frames_ctx->initial_pool_size = 10;
+-
+-    if (ctx->extra_hw_frames > 0)
+-        frames_ctx->initial_pool_size += ctx->extra_hw_frames;
++    frames_ctx->initial_pool_size = 0; /* independent output textures */
++
+ 
+     AVD3D11VAFramesContext *frames_hwctx = frames_ctx->hwctx;
+     frames_hwctx->MiscFlags = 0;

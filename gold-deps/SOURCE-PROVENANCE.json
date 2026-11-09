@@ -1,0 +1,30 @@
+{
+  "FFmpeg": {
+    "Commit": "946fcce07b6dcd0331c8cc609192aeff5e1924f8",
+    "Source": "https://github.com/FFmpeg/FFmpeg/archive/946fcce07b6dcd0331c8cc609192aeff5e1924f8.tar.gz"
+  },
+  "nv-codec-headers": {
+    "Version": "n13.0.19.0",
+    "Source": "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n13.0.19.0.tar.gz"
+  },
+  "x264": {
+    "Commit": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+    "Source": "https://repo.msys2.org/mingw/sources/mingw-w64-x264-0.165.r3222.b35605a-3.src.tar.zst",
+    "Built": "static, --disable-cli --disable-asm; no MSYS2 patches applied"
+  },
+  "libvpl": {
+    "Version": "2.17.0-1",
+    "Source": "https://repo.msys2.org/mingw/sources/mingw-w64-libvpl-2.17.0-1.src.tar.zst",
+    "PackageSHA256": "ae9c80f22fa62e533fbef09d4650e1152588e905b9a42b8f7ae4a2c12c27ae77"
+  },
+  "AMF": {
+    "Version": "1.5.2",
+    "Source": "Complete incorporated SDK headers included under AMF-headers; MIT",
+    "PackageSHA256": "ed0c19dc35b04616203b0039e85412a223a12e473de55887eb4e8549c9bb8274"
+  },
+  "NAudio": {
+    "Version": "2.2.1",
+    "Source": "https://codeload.github.com/naudio/NAudio/tar.gz/refs/tags/v2.2.1",
+    "SHA256": "4550d53d533e9a8252b9a87be032586a18da52e4c10845981fab743f6604907c"
+  }
+}

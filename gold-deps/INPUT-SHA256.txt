@@ -1,0 +1,5 @@
+ed0c19dc35b04616203b0039e85412a223a12e473de55887eb4e8549c9bb8274  packages/mingw-w64-ucrt-x86_64-amf-headers-1.5.2-1-any.pkg.tar.zst
+ae9c80f22fa62e533fbef09d4650e1152588e905b9a42b8f7ae4a2c12c27ae77  packages/mingw-w64-ucrt-x86_64-libvpl-2.17.0-1-any.pkg.tar.zst
+4bd392447f4a5f986462cfc412ab7ace3dfaa980e53b41f35d08c44b8b31cc9d  sources/mingw-w64-libvpl-2.17.0-1.src.tar.zst
+6a4d3620201074edec84681aeb25ffa1eceaa9451f7347ca1448f532634eed55  sources/mingw-w64-x264-0.165.r3222.b35605a-3.src.tar.zst
+4550d53d533e9a8252b9a87be032586a18da52e4c10845981fab743f6604907c  sources/NAudio-v2.2.1.tar.gz

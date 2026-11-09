@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.png -text
+*.ico -text
+*.ttf -text
+*.bmp -text
+*.gz -text
+*.zst -text
+*.zip -text
+*.patch -text -whitespace
+native-capture/rewind_queue.h -text
+native-capture/rewind_async.h -text
+gold-deps/AMF-headers/** -text -whitespace
+gold-runtime-notices/** -text -whitespace

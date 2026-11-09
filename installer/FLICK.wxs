@@ -1,0 +1,54 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="FLICK" Manufacturer="FLICK" Version="1.0.0" Language="1033"
+           UpgradeCode="A9175990-3D86-4E4B-A6ED-C4F73E916453" Scope="perUser" InstallerVersion="500" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of FLICK is already installed." Schedule="afterInstallInitialize" />
+    <!-- Migrate the unpublished preview installer without treating its version as a public release. -->
+    <Upgrade Id="13D27174-5383-43C1-AB29-00F1F52C36E3"><UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" Property="FLICK_PREVIEW_FOUND" /></Upgrade>
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Property Id="WINDOWSBUILDNUMBER" Secure="yes">
+  <RegistrySearch Id="BuildNumberSearch"
+                  Root="HKLM"
+                  Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                  Name="CurrentBuildNumber"
+                  Type="raw" />
+</Property>
+<Launch Condition="VersionNT64 AND (WINDOWSBUILDNUMBER &gt;= 19041)" Message="FLICK requires 64-bit Windows 10 version 2004 or newer, or Windows 11." />
+    <Property Id="ARPCOMMENTS" Value="Local replay capture for Windows. Clips and preferences are kept on uninstall." />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/ZeeEmn/FLICK" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/ZeeEmn/FLICK/issues/" />
+    <Property Id="ARPPRODUCTICON" Value="FlickIcon" /><Icon Id="FlickIcon" SourceFile="$(var.SourceRoot)/Assets/flick.ico" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <Property Id="MSIDISABLERMRESTART" Value="1" />
+    <Property Id="STARTONLOGIN" Value="1" Secure="yes" />
+    <Property Id="DESKTOPSHORTCUT" Secure="yes" />
+    <Property Id="SETUP_STARTUP" Value="0" />
+    <SetProperty Id="SETUP_STARTUP" Value="1" Before="CostFinalize" Sequence="execute" Condition="STARTONLOGIN = &quot;1&quot;" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.SourceRoot)/installer/License.rtf" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.SourceRoot)/installer/banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.SourceRoot)/installer/welcome.bmp" />
+    <Binary Id="SetupGuard" SourceFile="$(var.GuardDll)" />
+    <CustomAction Id="CheckRecorderClosed" BinaryRef="SetupGuard" DllEntry="CheckFlickClosed" Execute="immediate" Return="check" />
+    <InstallExecuteSequence><Custom Action="CheckRecorderClosed" Before="InstallValidate" Condition="1" /></InstallExecuteSequence>
+    <StandardDirectory Id="LocalAppDataFolder"><Directory Id="UserPrograms" Name="Programs"><Directory Id="INSTALLFOLDER" Name="FLICK" /></Directory></StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder"><Directory Id="FlickMenu" Name="FLICK" /></StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+    <Component Id="Shortcuts" Directory="FlickMenu" Guid="F425FEC1-59B1-46B8-B193-6AE44A12EF7B">
+      <Shortcut Id="StartShortcut" Name="FLICK" Target="[INSTALLFOLDER]FLICK.exe" WorkingDirectory="INSTALLFOLDER" Icon="FlickIcon" />
+      <RemoveFolder Id="RemoveFlickMenu" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\FLICK\Installer" Name="Installed" Value="1" Type="integer" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\FLICK\Setup" Name="PendingStartup" Value="[SETUP_STARTUP]" Type="string" />
+    </Component>
+    <Component Id="DesktopLink" Directory="DesktopFolder" Guid="2DB151A7-BED4-4F50-995D-0EFB540FB29A" Condition="DESKTOPSHORTCUT = &quot;1&quot;" Transitive="yes">
+      <Shortcut Id="DesktopShortcut" Name="FLICK" Target="[INSTALLFOLDER]FLICK.exe" WorkingDirectory="INSTALLFOLDER" Icon="FlickIcon" />
+      <RegistryValue Root="HKCU" Key="Software\FLICK\Installer" Name="DesktopShortcut" Value="1" Type="integer" KeyPath="yes" />
+    </Component>
+    <Component Id="StartupRegistration" Directory="INSTALLFOLDER" Guid="E3906C4C-C414-49F9-B5FA-BFF9C93A64DA" Condition="STARTONLOGIN = &quot;1&quot;" Transitive="yes">
+      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="FLICK" Value="&quot;[INSTALLFOLDER]FLICK.exe&quot; --background" Type="string" KeyPath="yes" />
+    </Component>
+    <Feature Id="FLICK" Title="FLICK" Level="1">
+      <ComponentGroupRef Id="Payload" /><ComponentRef Id="Shortcuts" /><ComponentRef Id="DesktopLink" /><ComponentRef Id="StartupRegistration" />
+    </Feature>
+    <UIRef Id="FlickWizard" />
+  </Package>
+</Wix>
