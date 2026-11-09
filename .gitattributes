@@ -7,7 +7,7 @@
 *.zst -text
 *.zip -text
 *.patch -text -whitespace
-native-capture/rewind_queue.h -text
-native-capture/rewind_async.h -text
-gold-deps/AMF-headers/** -text -whitespace
-gold-runtime-notices/** -text -whitespace
+source/native-capture/rewind_queue.h -text
+source/native-capture/rewind_async.h -text
+source/gold-deps/AMF-headers/** -text -whitespace
+source/gold-runtime-notices/** -text -whitespace

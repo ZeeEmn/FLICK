@@ -1,5 +1,7 @@
 # Build FLICK 1.0.0
 
+From the repository root, run `cd source` before the commands below.
+
 Requirements: .NET 10 SDK, Windows x64, MSYS2 UCRT64 GCC/G++, make, Git,
 pkg-config, tar and patch. Use a path without spaces for the native build.
 This archive contains the application, native bridge/filter, original queue

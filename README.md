@@ -2,6 +2,10 @@
 
 **Save the moment. Keep playing.**
 
+### [Download FLICK for Windows (.msi)](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1-Setup.msi)
+
+[Portable ZIP](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1-Portable.zip) | [All release files](https://github.com/ZeeEmn/FLICK/releases/latest)
+
 FLICK is a free, open-source instant-replay recorder for Windows. It runs in the
 background, ready to save recent gameplay with a shortcut. Record locally, capture
 screenshots, and watch or edit your clips without leaving the app.
@@ -143,7 +147,7 @@ Restart replay after changing display resolution.
 GPU, recording settings, and steps to reproduce it.
 
 Built with **C#, WPF, NAudio, DXGI/D3D11, and FFmpeg**. See
-[SOURCE-BUILD.md](SOURCE-BUILD.md) for build instructions and
-[THIRD-PARTY.md](THIRD-PARTY.md) for dependency notices.
+[SOURCE-BUILD.md](source/SOURCE-BUILD.md) for build instructions and
+[THIRD-PARTY.md](source/THIRD-PARTY.md) for dependency notices.
 
 Licensed under **GPL-3.0-only**. See [LICENSE](LICENSE).
