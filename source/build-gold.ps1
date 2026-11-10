@@ -1,4 +1,4 @@
-param([string]$MsysRoot='C:/msys64',[string]$OutputDirectory=(Join-Path $PSScriptRoot '../build/FLICK-1.0.0'),[switch]$ReuseNativeConfigure,[string]$DotNet='dotnet')
+param([string]$MsysRoot='C:/msys64',[string]$OutputDirectory=(Join-Path $PSScriptRoot '../build/FLICK-1.1.0'),[switch]$ReuseNativeConfigure,[string]$DotNet='dotnet')
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath($PSScriptRoot)
 $output=[IO.Path]::GetFullPath($OutputDirectory)

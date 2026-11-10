@@ -1,10 +1,10 @@
-# FLICK V1
+# FLICK V1.1
 
 **Save the moment. Keep playing.**
 
-### [Download FLICK for Windows (.msi)](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1-Setup.msi)
+### [Download FLICK for Windows (.msi)](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1.1-Setup.msi)
 
-[Portable ZIP](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1-Portable.zip) | [All release files](https://github.com/ZeeEmn/FLICK/releases/latest)
+[Portable ZIP](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1.1-Portable.zip) | [All release files](https://github.com/ZeeEmn/FLICK/releases/latest)
 
 FLICK is a free, open-source instant-replay recorder for Windows. It runs in the
 background, ready to save recent gameplay with a shortcut. Record locally, capture
@@ -66,11 +66,11 @@ exit through the tray menu to close FLICK completely.
 | Default shortcut | Action |
 | --- | --- |
 | **Alt + Z** | Show or hide the sidebar |
-| **Alt + F10** | Save a replay |
+| **Alt + F10** | FLICK It — save a replay |
 | **Alt + 0** | Save a full-resolution PNG screenshot |
 
-Sidebar and replay shortcuts can be rebound inside the app. Screenshots use the
-number-row 0 key. Clips and screenshots are saved in **Videos/FLICK** by default;
+Overlay, FLICK It, and screenshot shortcuts can all be changed in Settings.
+The default screenshot shortcut uses the number-row 0 key. Clips and screenshots are saved in **Videos/FLICK** by default;
 choose another folder under **Storage Location**. Unsaved replay history is cleared
 when recording stops.
 
@@ -88,11 +88,14 @@ Choose **30 or 60 FPS**, then select a profile:
 | Low | 1280 x 720 | 12 Mbps |
 | Very Low | 1280 x 720 | 6 Mbps |
 
+Pause replay before changing the clip length, then resume to start a new buffer.
 Available replay history depends on memory and profile settings.
 
 ## Audio and editing
 
-Desktop audio and microphone are saved as separate tracks. Use the mixer to select
+Clips include a default stereo mix so ordinary video players can play desktop
+audio and microphone together. Separate original tracks remain available in FLICK
+for editing. Existing clips keep their original audio layout until edited. Use the mixer to select
 additional audio device endpoints or click a speaker icon to mute a lane. Apps
 sharing one Windows output device share an audio lane.
 
@@ -101,7 +104,8 @@ trim the ends or remove a section from the middle. Save a new copy or overwrite
 the original. Copy-based edits follow video keyframes, so cut points and replay
 lengths can vary slightly.
 
-**Compress for Discord** creates a smaller copy targeting approximately 49 MB.
+**Compress for Discord** creates a smaller copy under 10 MB (with a 9.9 MB size budget).
+Longer clips may need lower export quality to fit; your original stays unchanged.
 **Open Clips Folder** opens your saved files. The trash icon permanently deletes
 the selected clip.
 

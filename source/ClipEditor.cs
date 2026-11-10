@@ -79,7 +79,7 @@ internal sealed class ClipEditor : Grid
     }
     private async Task PrepareAudioAsync(ClipFiles.Info clip){
         string cache=Path.Combine(ReplayEngine.DataFolder,".cache","audio");Directory.CreateDirectory(cache);
-        foreach(var track in clip.Audio){
+        foreach(var track in AudioCompatibility.Editable(clip.Audio)){
             string file=Path.Combine(cache,Guid.NewGuid().ToString("N")+".m4a");audioFiles.Add(file);
             await ReplayEngine.RunToolAsync("ffmpeg",["-v","error","-nostdin","-i",path,"-map","0:"+track.Stream,"-c","copy","-f","mp4",file],TimeSpan.FromSeconds(60),loading.Token);
             if(closed){try{File.Delete(file);}catch(IOException){}return;}

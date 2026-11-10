@@ -102,7 +102,7 @@ internal sealed class ReplayEngine : IDisposable
             Active=true;Report("Replay is buffering.");
         }catch{nativeWorker?.Dispose();nativeWorker=null;audio.Dispose();audio=null;throw;}
     }
-    public void SetHistory(int seconds){if(buffer is not null)buffer.HistorySeconds=seconds;audio?.SetHistory(seconds);}
+    public void SetHistory(int seconds){if(Active)throw new InvalidOperationException("Pause replay to change the clip length.");if(buffer is not null)buffer.HistorySeconds=seconds;audio?.SetHistory(seconds);}
     internal void SetAudioSources(IReadOnlyList<AudioSourceSetting> sources){audio?.SetSources(sources);if(settings is not null)settings=settings with{AudioSources=sources};}
     public void SetAudio(bool desktop,bool mic)
     {
@@ -150,8 +150,7 @@ internal sealed class ReplayEngine : IDisposable
             if(capturedAudio is not null && videoEpoch>=0)audioFiles=capturedAudio.Snapshot(Math.Max(0,videoEpoch+snapshot.Origin),exportSeconds,Path.Combine(DataFolder,id));
             foreach(var track in audioFiles){mux.Add("-i");mux.Add(track.Path);}
             mux.AddRange(new[]{"-map","0:v:0","-c:v","copy"});
-            for(int i=0;i<audioFiles.Count;i++)mux.AddRange(new[]{"-map",$"{i+1}:a:0","-metadata:s:a:"+i,"title="+audioFiles[i].Title,"-metadata:s:a:"+i,"handler_name="+audioFiles[i].Title});
-            if(audioFiles.Count>0)mux.AddRange(new[]{"-c:a","aac","-b:a","192k"});
+            AudioCompatibility.MapSavedAudio(mux,audioFiles);
             mux.AddRange(new[]{"-t",exportSeconds.ToString("0.######",System.Globalization.CultureInfo.InvariantCulture),"-avoid_negative_ts","make_zero","-movflags","+faststart",output});
             try{await RunToolAsync("ffmpeg",mux,TimeSpan.FromSeconds(90));}finally{foreach(var track in audioFiles)File.Delete(track.Path);}
             string probe=await RunToolAsync("ffprobe",["-v","error","-show_entries","format=duration:stream=codec_type,codec_name","-of","json",output],TimeSpan.FromSeconds(20));

@@ -22,6 +22,7 @@ internal sealed class ProductSettings
     public string? InputId {get;set;}
     public string PanelShortcut {get;set;}="Alt + Z";
     public string SaveShortcut {get;set;}="Alt + F10";
+    public string ScreenshotShortcut {get;set;}="Alt + 0";
     public bool LaunchOnLogin {get;set;}=true;
     internal void Normalize(){
         Profile=QualityProfiles.Normalize(Profile);FrameRate=FrameRate==30?30:60;
@@ -33,8 +34,9 @@ internal sealed class ProductSettings
         Codec="h264"; // Video encoding is automatic; migrate old manual HEVC preferences.
         Seconds=MemoryPolicy.ClampSeconds(Seconds,Profile,MemoryPolicy.Available());
         if(InputId?.Length>2048)InputId=null;
-        try{if(Shortcut.Parse(PanelShortcut)==(1u,0x30u))throw new FormatException();Shortcut.Parse(PanelShortcut);if(PanelShortcut.Length>64)throw new FormatException();}catch{PanelShortcut="Alt + Z";}
-        try{if(Shortcut.Parse(SaveShortcut)==(1u,0x30u))throw new FormatException();Shortcut.Parse(SaveShortcut);if(SaveShortcut.Length>64||SaveShortcut==PanelShortcut)throw new FormatException();}catch{SaveShortcut="Alt + F10";}
+        var used=new HashSet<(uint,uint)>();
+        string Unique(string value,string fallback){foreach(string candidate in new[]{value,fallback,"Alt + Z","Alt + F10","Alt + 0","Ctrl + Alt + F12","Ctrl + Shift + F12"})try{if(candidate.Length<=64&&used.Add(Shortcut.Parse(candidate)))return candidate;}catch(FormatException){}catch(NullReferenceException){}throw new InvalidOperationException("No valid shortcut available.");}
+        PanelShortcut=Unique(PanelShortcut,"Alt + Z");SaveShortcut=Unique(SaveShortcut,"Alt + F10");ScreenshotShortcut=Unique(ScreenshotShortcut,"Alt + 0");
     }
     internal static ProductSettings Load(){
         var value=new ProductSettings();try{string file=Path.Combine(ReplayEngine.DataFolder,"preferences.json");if(!File.Exists(file))file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"REWIND","preferences.json");if(new FileInfo(file).Length<=65536)value=JsonSerializer.Deserialize<ProductSettings>(File.ReadAllText(file),new JsonSerializerOptions{MaxDepth=16})??value;}catch{}

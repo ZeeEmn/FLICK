@@ -40,12 +40,12 @@ internal sealed class App : System.Windows.Application
         if(!inspection){hud=new HudWindow();shell.ViewSettingsChanged+=UpdateHud;engine.AudioChanged+=AudioStateChanged;UpdateHud();Microsoft.Win32.SystemEvents.UserPreferenceChanged+=ThemeSystemChanged;}
         messages=new HwndSource(new HwndSourceParameters("FLICK hotkeys"){Width=0,Height=0,WindowStyle=0});
         messages.AddHook(MessageHook);
-        shell.ShortcutApplyRequested+=(panel,save)=>SetShortcuts(panel,save);
-        shell.ShortcutCaptureStateChanged+=listening=>{if(messages is null)return;if(listening){UnregisterHotKey(messages.Handle,1);UnregisterHotKey(messages.Handle,2);UnregisterHotKey(messages.Handle,3);screenshotKey=false;}else {SetShortcuts(shell.PanelShortcut,shell.SaveShortcut);screenshotKey=RegisterHotKey(messages.Handle,3,1|0x4000,0x30);}};
-        if(!inspection){SetShortcuts(shell.PanelShortcut,shell.SaveShortcut);screenshotKey=RegisterHotKey(messages.Handle,3,1|0x4000,0x30);if(!screenshotKey)Dispatcher.BeginInvoke(()=>MessageBox.Show("Alt + 0 is in use by another app; screenshots are unavailable until it is released and FLICK restarted.","FLICK"));}
+        shell.ShortcutApplyRequested+=(panel,save,screenshot)=>SetShortcuts(panel,save,screenshot);
+        shell.ShortcutCaptureStateChanged+=listening=>{if(messages is null)return;if(listening){UnregisterHotKey(messages.Handle,1);UnregisterHotKey(messages.Handle,2);UnregisterHotKey(messages.Handle,3);screenshotKey=false;}else {SetShortcuts(shell.PanelShortcut,shell.SaveShortcut,shell.ScreenshotShortcut);}};
+        if(!inspection){SetShortcuts(shell.PanelShortcut,shell.SaveShortcut,shell.ScreenshotShortcut);}
         var menu=new Forms.ContextMenuStrip();
         menu.Items.Add("Open FLICK Home",null,(_,_)=>shell.ShowHome());
-        menu.Items.Add("Save replay",null,async(_,_)=>await shell.SaveClipAsync());
+        menu.Items.Add("FLICK It",null,async(_,_)=>await shell.SaveClipAsync());
         menu.Items.Add("Open clips folder",null,(_,_)=>Shell.OpenFolder());
         menu.Items.Add("Exit",null,async(_,_)=>{await shell.StopBeforeExitAsync();Shutdown();});
         tray=new Forms.NotifyIcon{Text="FLICK - replay paused",Icon=new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory,"Assets","flick.ico")),Visible=true,ContextMenuStrip=menu};
@@ -61,14 +61,16 @@ internal sealed class App : System.Windows.Application
         if(!inspection)_=shell.CheckForUpdatesAsync();
         if(!inspection)tray.ShowBalloonTip(3000,"FLICK","Running in the background. Replay is starting.",Forms.ToolTipIcon.Info);
     }
-    private bool SetShortcuts(string panel,string save)
+    private bool SetShortcuts(string panel,string save,string screenshot)
     {
         if(messages is null || shell is null)return false;
-        UnregisterHotKey(messages.Handle,1);UnregisterHotKey(messages.Handle,2);
-        var p=ParseShortcut(panel);var s=ParseShortcut(save);
+        var p=ParseShortcut(panel);var s=ParseShortcut(save);var shot=ParseShortcut(screenshot);
+        if(p==s||p==shot||s==shot)return false;
+        UnregisterHotKey(messages.Handle,1);UnregisterHotKey(messages.Handle,2);UnregisterHotKey(messages.Handle,3);
         panelKey=RegisterHotKey(messages.Handle,1,p.Modifiers|0x4000,p.Key);
         saveKey=RegisterHotKey(messages.Handle,2,s.Modifiers|0x4000,s.Key);
-        shell.SetHotkeyState(panelKey,saveKey);return panelKey&&saveKey;
+        screenshotKey=RegisterHotKey(messages.Handle,3,shot.Modifiers|0x4000,shot.Key);
+        shell.SetHotkeyState(panelKey,saveKey,screenshotKey);return panelKey&&saveKey&&screenshotKey;
     }
     private static (uint Modifiers,uint Key) ParseShortcut(string value)=>Shortcut.Parse(value);
     private IntPtr MessageHook(IntPtr hwnd,int msg,IntPtr wParam,IntPtr lParam,ref bool handled)

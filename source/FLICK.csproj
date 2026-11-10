@@ -6,7 +6,7 @@
     <PlatformTarget>x64</PlatformTarget><RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained><PublishTrimmed>false</PublishTrimmed>
     <Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings>
-    <AssemblyName>FLICK</AssemblyName><Product>FLICK</Product><Version>1.0.1</Version>
+    <AssemblyName>FLICK</AssemblyName><Product>FLICK</Product><Version>1.1.0</Version>
     <DebugType>none</DebugType><DebugSymbols>false</DebugSymbols>
     <Deterministic>true</Deterministic><ApplicationIcon>Assets\flick.ico</ApplicationIcon>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**;gold-deps/**;release-tools/**;installer/**</DefaultItemExcludes>

@@ -26,7 +26,7 @@ internal sealed class Shell : Window
     private ShortcutField? listeningField;
     private Action<string>? uiEngineChanged;private Action? uiClipsChanged;
     private bool uiObserved;private int refreshQueued;
-    public event Func<string,string,bool>? ShortcutApplyRequested;
+    public event Func<string,string,string,bool>? ShortcutApplyRequested;
     public event Action<bool>? ShortcutCaptureStateChanged;
     public event Action<string>? SavedClipNotification;
     internal event Action? ViewSettingsChanged;
@@ -67,6 +67,7 @@ internal sealed class Shell : Window
     private bool updateBusy;
     public string PanelShortcut=>preferences.PanelShortcut;
     public string SaveShortcut=>preferences.SaveShortcut;
+    public string ScreenshotShortcut=>preferences.ScreenshotShortcut;
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window,out uint process);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
@@ -187,8 +188,13 @@ internal sealed class Shell : Window
         timeGroup.Children.Add(Text("CLIP THE LAST",11));var time=Text(Duration(preferences.Seconds),20);time.Foreground=Lime;timeGroup.Children.Add(time);
         var slider=new ReplaySlider{Seconds=preferences.Seconds};var presets=new System.Windows.Controls.Primitives.UniformGrid{Columns=5};var choices=new Dictionary<int,Button>();
         foreach(int seconds in new[]{30,60,120,180,300}){int n=seconds;var b=Button(Duration(n),()=>slider.Seconds=n);b.Padding=new Thickness(5,8,5,8);choices[n]=b;presets.Children.Add(b);}
-        void SetTime(int value){value=MemoryPolicy.ClampSeconds(value,preferences.Profile,MemoryPolicy.Available());if(slider.Seconds!=value){slider.Seconds=value;return;}preferences.Seconds=value;time.Text=Duration(value);engine.SetHistory(value);SavePreferences();foreach(var pair in choices){bool selected=pair.Key==value;pair.Value.BorderBrush=selected?Lime:Brush("#29313B");pair.Value.Background=ThemePalette.Secondary;pair.Value.Foreground=selected?Lime:ThemePalette.Foreground;pair.Value.Effect=null;}}
-        slider.Changed+=SetTime;SetTime(preferences.Seconds);timeGroup.Children.Add(slider);timeGroup.Children.Add(presets);
+        bool LengthLocked()=>armed||changing||engine.Active;
+        void PaintTime(){time.Text=Duration(preferences.Seconds);foreach(var pair in choices){bool selected=pair.Key==preferences.Seconds;pair.Value.BorderBrush=selected?Lime:Brush("#29313B");pair.Value.Background=ThemePalette.Secondary;pair.Value.Foreground=selected?Lime:ThemePalette.Foreground;pair.Value.Effect=null;}}
+        void SetTime(int value){if(LengthLocked()){if(slider.Seconds!=preferences.Seconds)slider.Seconds=preferences.Seconds;return;}value=MemoryPolicy.ClampSeconds(value,preferences.Profile,MemoryPolicy.Available());if(slider.Seconds!=value){slider.Seconds=value;return;}if(value!=preferences.Seconds){engine.SetHistory(value);preferences.Seconds=value;SavePreferences();}PaintTime();}
+        slider.Changed+=SetTime;PaintTime();timeGroup.Children.Add(slider);timeGroup.Children.Add(presets);
+        var lengthNotice=Text("Pause replay to change",11);timeGroup.Children.Add(lengthNotice);
+        void UpdateLength(){bool locked=LengthLocked();slider.IsEnabled=!locked;presets.IsEnabled=!locked;slider.Opacity=presets.Opacity=locked?.5:1;lengthNotice.Visibility=locked?Visibility.Visible:Visibility.Collapsed;}
+        stateUpdates[dashboard?"home-duration":"overlay-duration"]=UpdateLength;UpdateLength();
         audioGroup.Children.Add(Text("AUDIO SOURCES",11));audioGroup.Children.Add(AudioToggle("Desktop audio",true,dashboard));audioGroup.Children.Add(AudioToggle("Microphone",false,dashboard));
         audioGroup.Children.Add(Text("Input device",11));var input=new MicrophonePicker(()=>preferences.InputId,async id=>{preferences.InputId=id;SavePreferences();await RestartAsync();},!inspection);audioGroup.Children.Add(input);
         if(dashboard)Grid.SetColumn(controls,1);columns.Children.Add(controls);
@@ -252,8 +258,8 @@ internal sealed class Shell : Window
         Toggle(left,"Show replay & microphone HUD",preferences.HudEnabled,value=>preferences.HudEnabled=value);
         left.Children.Add(Text("Accent color (#RRGGBB)",11));var hex=new TextBox{Text=preferences.AccentHex,MaxLength=7,MinHeight=35};hex.TextChanged+=(_,_)=>{string color=hex.Text.Trim();if(color.Length==0)color=ThemePalette.DefaultAccent;if(!ThemePalette.ValidHex(color)){hex.ToolTip="Use # followed by six hexadecimal digits.";return;}preferences.AccentHex=color;ThemePalette.Apply(color,preferences.ThemeVariant);SavePreferences();};left.Children.Add(hex);
         left.Children.Add(Text("Theme",11));var theme=new ComboBox{ItemsSource=new[]{"System Default","Pure Dark Onyx","Light Mode"},SelectedItem=preferences.ThemeVariant};theme.SelectionChanged+=(_,_)=>{preferences.ThemeVariant=(string)theme.SelectedItem;ThemePalette.Apply(preferences.AccentHex,preferences.ThemeVariant);SavePreferences();};left.Children.Add(theme);
-        var audio=Button("Audio lanes · "+preferences.AudioSources.Count+" additional",()=>{var selector=new AudioSourceSelector(preferences.AudioSources,async selected=>{await Task.Run(()=>engine.SetAudioSources(selected));preferences.AudioSources=selected.ToList();SavePreferences();ViewSettingsChanged?.Invoke();},!inspection){Owner=Window.GetWindow(root)};selector.ShowDialog();});audio.Margin=new Thickness(0,18,0,6);left.Children.Add(audio);left.Children.Add(Text("Alt + 0 saves a PNG of the primary monitor.",11));
-        right.Children.Add(Text("Open overlay shortcut",11));right.Children.Add(ShortcutInput(true));right.Children.Add(Text("Save replay shortcut",11));right.Children.Add(ShortcutInput(false));right.Children.Add(Text("HUD Indicator Position",11));var corner=new ComboBox{ItemsSource=new[]{"Top-Right","Top-Left","Bottom-Right","Bottom-Left"},SelectedItem=preferences.HudPosition};corner.SelectionChanged+=(_,_)=>{preferences.HudPosition=(string)corner.SelectedItem;SavePreferences();ViewSettingsChanged?.Invoke();};right.Children.Add(corner);
+        var audio=Button("Audio lanes · "+preferences.AudioSources.Count+" additional",()=>{var selector=new AudioSourceSelector(preferences.AudioSources,async selected=>{await Task.Run(()=>engine.SetAudioSources(selected));preferences.AudioSources=selected.ToList();SavePreferences();ViewSettingsChanged?.Invoke();},!inspection){Owner=Window.GetWindow(root)};selector.ShowDialog();});audio.Margin=new Thickness(0,18,0,6);left.Children.Add(audio);var screenshotHint=Text(ScreenshotShortcut+" saves a PNG of the primary monitor.",11);left.Children.Add(screenshotHint);stateUpdates["screenshot-hint"]=()=>screenshotHint.Text=ScreenshotShortcut+" saves a PNG of the primary monitor.";
+        right.Children.Add(Text("Open overlay shortcut",11));right.Children.Add(ShortcutInput(0));right.Children.Add(Text("FLICK It shortcut",11));right.Children.Add(ShortcutInput(1));right.Children.Add(Text("Screenshot shortcut",11));right.Children.Add(ShortcutInput(2));right.Children.Add(Text("HUD Indicator Position",11));var corner=new ComboBox{ItemsSource=new[]{"Top-Right","Top-Left","Bottom-Right","Bottom-Left"},SelectedItem=preferences.HudPosition};corner.SelectionChanged+=(_,_)=>{preferences.HudPosition=(string)corner.SelectedItem;SavePreferences();ViewSettingsChanged?.Invoke();};right.Children.Add(corner);
         return root;
     }
     private QualityControls CreateQualityControls(){qualityControls.RemoveAll(w=>!w.TryGetTarget(out _));var controls=new QualityControls(preferences,ApplyQualityAsync);qualityControls.Add(new(controls));return controls;}
@@ -272,15 +278,15 @@ internal sealed class Shell : Window
     internal static void OpenUpdatePage(UpdateResult result){if(result.ReleaseUrl is {} url)Process.Start(new ProcessStartInfo(url){UseShellExecute=true});}
     private void ImportExternalVideo(){var picker=new Microsoft.Win32.OpenFileDialog{Title="Compress External Video",Filter="Video files|*.mp4;*.m4v;*.mov;*.mkv;*.webm;*.avi;*.wmv;*.mpg;*.mpeg;*.ts;*.flv;*.ogv|All files|*.*",CheckFileExists=true,Multiselect=false};Window owner=home?.IsVisible==true?home:this;if(picker.ShowDialog(owner)==true)try{string path=ReadOnlyVideo.LocalFile(picker.FileName);ShowCompression(path,true,owner==home);}catch(Exception e){NotificationRequested?.Invoke(e.Message);}}
     private void ShowCompression(string path,bool external,bool dashboard){var host=dashboard&&home?.IsVisible==true?homeWorkspace:overlayRoot;if(host.Children.OfType<CompressionPrompt>().Any())return;CompressionPrompt? prompt=null;prompt=new CompressionPrompt(path,external,engine,()=>host.Children.Remove(prompt!),output=>NotificationRequested?.Invoke("Compressed copy saved: "+Path.GetFileName(output)));Panel.SetZIndex(prompt,200);host.Children.Add(prompt);}
-    private TextBox ShortcutInput(bool panel){
-        var box=new ShortcutField(()=>panel?PanelShortcut:SaveShortcut,async value=>{
-            string oldPanel=PanelShortcut,oldSave=SaveShortcut;string newPanel=panel?value:oldPanel,newSave=panel?oldSave:value;
-            if(Shortcut.Parse(value)==(1u,0x30u))throw new InvalidOperationException("Alt + 0 is reserved for screenshots.");
-            if(Shortcut.Parse(newPanel)==Shortcut.Parse(newSave))throw new InvalidOperationException("Shortcuts must be different.");
-            if(ShortcutApplyRequested?.Invoke(newPanel,newSave)==false){ShortcutApplyRequested?.Invoke(oldPanel,oldSave);return false;}
-            if(panel)preferences.PanelShortcut=value;else preferences.SaveShortcut=value;
-            try{if(!inspection)await Task.Run(preferences.Save);ShortcutsChanged?.Invoke(PanelShortcut,SaveShortcut);return true;}
-            catch{preferences.PanelShortcut=oldPanel;preferences.SaveShortcut=oldSave;ShortcutApplyRequested?.Invoke(oldPanel,oldSave);throw;}
+    private TextBox ShortcutInput(int kind){
+        var box=new ShortcutField(()=>kind==0?PanelShortcut:kind==1?SaveShortcut:ScreenshotShortcut,async value=>{
+            string oldPanel=PanelShortcut,oldSave=SaveShortcut,oldScreenshot=ScreenshotShortcut;
+            string newPanel=kind==0?value:oldPanel,newSave=kind==1?value:oldSave,newScreenshot=kind==2?value:oldScreenshot;
+            if(new[]{Shortcut.Parse(newPanel),Shortcut.Parse(newSave),Shortcut.Parse(newScreenshot)}.Distinct().Count()!=3)throw new InvalidOperationException("Shortcuts must be different.");
+            if(ShortcutApplyRequested?.Invoke(newPanel,newSave,newScreenshot)==false){ShortcutApplyRequested?.Invoke(oldPanel,oldSave,oldScreenshot);return false;}
+            preferences.PanelShortcut=newPanel;preferences.SaveShortcut=newSave;preferences.ScreenshotShortcut=newScreenshot;
+            try{if(!inspection)await Task.Run(preferences.Save);ShortcutsChanged?.Invoke(PanelShortcut,SaveShortcut);UpdateStates();return true;}
+            catch{preferences.PanelShortcut=oldPanel;preferences.SaveShortcut=oldSave;preferences.ScreenshotShortcut=oldScreenshot;ShortcutApplyRequested?.Invoke(oldPanel,oldSave,oldScreenshot);throw;}
         },(field,active)=>{
             if(active){if(listeningField!=field)listeningField?.CancelCapture();listeningField=field;ShortcutCaptureStateChanged?.Invoke(true);if(Window.GetWindow(field)==this){OverlayWindow.SetMouseOnly(this,false);Activate();}}
             else if(listeningField==field){listeningField=null;ShortcutCaptureStateChanged?.Invoke(false);OverlayWindow.SetMouseOnly(this,true);}
@@ -291,7 +297,7 @@ internal sealed class Shell : Window
     private static string Duration(int seconds)=>seconds<60?$"{seconds}s":seconds%60==0?$"{seconds/60}m":$"{seconds/60}m {seconds%60}s";
     private bool restartPending,restartLoop;
     private async Task RestartAsync(){if(inspection||quitting)return;restartPending=true;if(changing||restartLoop)return;restartLoop=true;try{while(restartPending&&!quitting){restartPending=false;changing=true;try{await engine.FinishPendingSaveAsync();await engine.StopAsync();}finally{changing=false;}await EnsureReplayAsync();}}finally{restartLoop=false;}}
-    private async Task ToggleReplayAsync(){if(changing)return;armed=!armed;if(armed)await EnsureReplayAsync();else await engine.StopAsync();ShowTab(tab);if(home?.IsVisible==true)ShowHomeTab(homeTab);}
+    private async Task ToggleReplayAsync(){if(changing)return;armed=!armed;if(armed)await EnsureReplayAsync();else{changing=true;UpdateStates();try{await engine.StopAsync();}finally{changing=false;UpdateStates();}}ShowTab(tab);if(home?.IsVisible==true)ShowHomeTab(homeTab);}
     private ReplaySaveButton SaveButton(){saveButtons.RemoveAll(w=>!w.TryGetTarget(out _));var button=new ReplaySaveButton(()=>_=SaveClipAsync());button.SetState(saveState);saveButtons.Add(new(button));return button;}
     private void UpdateSaveButtons(){for(int i=saveButtons.Count-1;i>=0;i--)if(saveButtons[i].TryGetTarget(out var button))button.SetState(saveState);else saveButtons.RemoveAt(i);}
     public async Task SaveClipAsync(){
@@ -343,7 +349,7 @@ internal sealed class Shell : Window
         AnimatePresentation(x,-Width,alpha,0,140,()=>{if(version!=transition)return;Hide();overlaySurface.Opacity=0;});
     }
     private IntPtr Hook(IntPtr h,int message,IntPtr w,IntPtr l,ref bool handled){if(message==0x21){handled=true;return new IntPtr(3);}return IntPtr.Zero;}
-    public void SetHotkeyState(bool panel,bool save){hotkeyWarning=!panel?"Overlay shortcut is in use":!save?"Save shortcut is in use":"";UpdateStates();}
+    public void SetHotkeyState(bool panel,bool save,bool screenshot){hotkeyWarning=!panel?"Overlay shortcut is in use":!save?"FLICK It shortcut is in use":!screenshot?"Screenshot shortcut is in use":"";UpdateStates();}
     public async Task StopBeforeExitAsync(){quitting=true;armed=false;autoTimer.Stop();listeningField?.CancelCapture();if(startupTask is not null)try{await startupTask.WaitAsync(TimeSpan.FromSeconds(20));}catch(Exception e){Log(e.Message);}await engine.StopAsync();await engine.FinishPendingSaveAsync();quitting=true;home?.Close();}
     public void Release(){updateLifetime.Cancel();preferenceTimer.Stop();dismissTimer.Stop();autoTimer.Stop();ReleaseEditors();ObserveUi(false);CancelPresentationReady();presentation?.Remove(this);quitting=true;home?.Close();}
     public static void OpenFolder(string? file=null){Directory.CreateDirectory(ReplayEngine.SaveFolder);var p=new ProcessStartInfo("explorer.exe"){UseShellExecute=true};p.ArgumentList.Add(file is null?ReplayEngine.SaveFolder:Path.GetDirectoryName(file)!);Process.Start(p);}

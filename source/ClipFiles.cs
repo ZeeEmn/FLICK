@@ -57,7 +57,7 @@ internal static class ClipFiles
         double actualStart=removeInterior?NextKeyframe(info,start):SnapStart(info,start);
         double actualEnd=removeInterior?NextKeyframe(info,end):end;
         if(removeInterior&&(actualStart<=0||actualEnd>=info.Duration||actualEnd<=actualStart))throw new ArgumentOutOfRangeException(nameof(start),"Choose an interior range with playable video on both sides.");
-        var selected=keepAudio is null?info.Audio:info.Audio.Where(a=>keepAudio.Contains(a.Ordinal)).ToArray();
+        var editable=AudioCompatibility.Editable(info.Audio);var selected=keepAudio is null?editable:editable.Where(a=>keepAudio.Contains(a.Ordinal)).ToArray();
         var maps=new List<string>();if(selected.Length==info.Audio.Length)maps.AddRange(["-map","0"]);else{maps.AddRange(["-map","0:v:0"]);foreach(var track in selected)maps.AddRange(["-map","0:"+track.Stream]);}
         var before=new FileInfo(input);long length=before.Length;DateTime modified=before.LastWriteTimeUtc;
         string id=Guid.NewGuid().ToString("N")[..8];string temp=Path.Combine(Path.GetDirectoryName(input)!,Path.GetFileNameWithoutExtension(input)+"_"+id+".saving.mp4");
@@ -70,11 +70,12 @@ internal static class ClipFiles
                 args.AddRange(maps);args.AddRange(["-c","copy","-avoid_negative_ts","make_zero","-movflags","+faststart",temp]);
                 await ReplayEngine.RunToolAsync("ffmpeg",args,TimeSpan.FromMinutes(3),cancellation);
             }
+            await AudioCompatibility.EnsureMixAsync(temp,cancellation);
             string check=await ReplayEngine.RunToolAsync("ffprobe",["-v","error","-show_entries","format=duration:stream=codec_type","-of","json",temp],TimeSpan.FromSeconds(20),cancellation);
             using var probe=JsonDocument.Parse(check);
             if(!probe.RootElement.GetProperty("streams").EnumerateArray().Any(s=>s.GetProperty("codec_type").GetString()=="video"))throw new InvalidDataException("Trim did not produce video.");
             double duration=double.Parse(probe.RootElement.GetProperty("format").GetProperty("duration").GetString()!,CultureInfo.InvariantCulture);
-            if(probe.RootElement.GetProperty("streams").EnumerateArray().Count(s=>s.GetProperty("codec_type").GetString()=="audio")!=selected.Length)throw new InvalidDataException("Edit did not preserve the selected audio tracks.");
+            if(probe.RootElement.GetProperty("streams").EnumerateArray().Count(s=>s.GetProperty("codec_type").GetString()=="audio")!=(selected.Length+(selected.Length>1?1:0)))throw new InvalidDataException("Edit did not preserve the selected audio tracks.");
             if(!double.IsFinite(duration)||duration<=0)throw new InvalidDataException("Trim is empty.");
             // Validate before replacing an existing clip, so a bad remux cannot destroy its source.
             if(overwrite){progress?.Report("Validating trimmed video...");await ReplayEngine.RunToolAsync("ffmpeg",["-v","error","-xerror","-nostdin","-threads","2","-i",temp,"-map","0:v?","-map","0:a?","-f","null","-"],TimeSpan.FromMinutes(15),cancellation);}
