@@ -8,8 +8,9 @@ internal sealed class ReplaySaveButton : Button
 {
     private readonly TextBlock label=new(){VerticalAlignment=VerticalAlignment.Center,FontWeight=FontWeights.SemiBold};
     private readonly Ellipse ring=new(){Width=16,Height=16,Stroke=ThemePalette.Accent,StrokeThickness=2,StrokeDashArray=new DoubleCollection{8,4},Margin=new Thickness(0,0,9,0),RenderTransformOrigin=new Point(.5,.5),RenderTransform=new RotateTransform(),Visibility=Visibility.Collapsed};
-    private int state;
+    private int state;private bool available=true;
     internal ReplaySaveButton(Action save){SetResourceReference(StyleProperty,typeof(Button));var row=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Center};row.Children.Add(ring);row.Children.Add(label);Content=row;Click+=(_,_)=>save();IsVisibleChanged+=(_,_)=>Animate();Unloaded+=(_,_)=>((RotateTransform)ring.RenderTransform).BeginAnimation(RotateTransform.AngleProperty,null);SetState(0);}
-    internal void SetState(int value){state=value;IsEnabled=value!=1;label.Text=value==1?"Saving Replay...":value==2?"✓ Saved!":"FLICK It";Background=value==1?ThemePalette.Secondary:ThemePalette.Accent;Foreground=value==1?ThemePalette.Muted:ThemePalette.OnAccent;ring.Visibility=value==1?Visibility.Visible:Visibility.Collapsed;Animate();}
+    internal void SetState(int value){state=value;IsEnabled=available&&value!=1;label.Text=value==1?"Saving Replay...":value==2?"✓ Saved!":"FLICK It";Background=!available||value==1?ThemePalette.Secondary:ThemePalette.Accent;Foreground=!available||value==1?ThemePalette.Muted:ThemePalette.OnAccent;ring.Visibility=value==1?Visibility.Visible:Visibility.Collapsed;Animate();}
+    internal void SetAvailable(bool value){if(available==value)return;available=value;ToolTip=value?null:"Resume replay to save a clip.";SetState(state);}
     private void Animate(){var turn=(RotateTransform)ring.RenderTransform;turn.BeginAnimation(RotateTransform.AngleProperty,null);if(state==1&&IsVisible)turn.BeginAnimation(RotateTransform.AngleProperty,new DoubleAnimation(0,360,TimeSpan.FromMilliseconds(750)){RepeatBehavior=RepeatBehavior.Forever});}
 }

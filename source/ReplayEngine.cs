@@ -131,6 +131,7 @@ internal sealed class ReplayEngine : IDisposable
         string? raw=null,output=null;
         try
         {
+            if(!Active)throw new InvalidOperationException("Resume replay before saving a clip.");
             var source=buffer??throw new InvalidOperationException("Replay has not started.");
             var snapshot=source.TakeSnapshot(seconds);
             double exportSeconds=Math.Min(snapshot.Seconds,Math.Clamp(seconds,1,300));

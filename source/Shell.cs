@@ -297,10 +297,12 @@ internal sealed class Shell : Window
     private static string Duration(int seconds)=>seconds<60?$"{seconds}s":seconds%60==0?$"{seconds/60}m":$"{seconds/60}m {seconds%60}s";
     private bool restartPending,restartLoop;
     private async Task RestartAsync(){if(inspection||quitting)return;restartPending=true;if(changing||restartLoop)return;restartLoop=true;try{while(restartPending&&!quitting){restartPending=false;changing=true;try{await engine.FinishPendingSaveAsync();await engine.StopAsync();}finally{changing=false;}await EnsureReplayAsync();}}finally{restartLoop=false;}}
-    private async Task ToggleReplayAsync(){if(changing)return;armed=!armed;if(armed)await EnsureReplayAsync();else{changing=true;UpdateStates();try{await engine.StopAsync();}finally{changing=false;UpdateStates();}}ShowTab(tab);if(home?.IsVisible==true)ShowHomeTab(homeTab);}
-    private ReplaySaveButton SaveButton(){saveButtons.RemoveAll(w=>!w.TryGetTarget(out _));var button=new ReplaySaveButton(()=>_=SaveClipAsync());button.SetState(saveState);saveButtons.Add(new(button));return button;}
-    private void UpdateSaveButtons(){for(int i=saveButtons.Count-1;i>=0;i--)if(saveButtons[i].TryGetTarget(out var button))button.SetState(saveState);else saveButtons.RemoveAt(i);}
+    private async Task ToggleReplayAsync(){if(changing)return;armed=!armed;if(armed)await EnsureReplayAsync();else{changing=true;UpdateStates();try{await engine.FinishPendingSaveAsync();await engine.StopAsync();}catch(Exception e){armed=engine.Active;NotificationRequested?.Invoke(e.Message);}finally{changing=false;UpdateStates();}}ShowTab(tab);if(home?.IsVisible==true)ShowHomeTab(homeTab);}
+    internal bool CanSaveReplay=>armed&&!changing&&engine.Active&&!quitting;
+    private ReplaySaveButton SaveButton(){saveButtons.RemoveAll(w=>!w.TryGetTarget(out _));var button=new ReplaySaveButton(()=>_=SaveClipAsync());button.SetAvailable(CanSaveReplay);button.SetState(saveState);saveButtons.Add(new(button));return button;}
+    private void UpdateSaveButtons(){for(int i=saveButtons.Count-1;i>=0;i--)if(saveButtons[i].TryGetTarget(out var button)){button.SetAvailable(CanSaveReplay);button.SetState(saveState);}else saveButtons.RemoveAt(i);}
     public async Task SaveClipAsync(){
+        if(!CanSaveReplay){NotificationRequested?.Invoke(!armed?"Resume replay before saving a clip.":"Replay is not ready. Please try again shortly.");return;}
         if(!saveAdmission.TryEnter())return;Guid request=saveRequest=Guid.NewGuid();saveState=1;UpdateSaveButtons();bool saved=false;
         try{if(changing)throw new InvalidOperationException("Capture is recovering. Please try again shortly.");string file=await Task.Run(()=>engine.SaveAsync(preferences.Seconds,request));saved=true;saveState=2;if(!quitting){SavedClipNotification?.Invoke(file);NotificationRequested?.Invoke("Replay saved: "+Path.GetFileName(file));}}
         catch(Exception e){saveState=0;NotificationRequested?.Invoke(e.Message);}finally{saveAdmission.Exit();UpdateSaveButtons();}

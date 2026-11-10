@@ -45,7 +45,8 @@ internal sealed class App : System.Windows.Application
         if(!inspection){SetShortcuts(shell.PanelShortcut,shell.SaveShortcut,shell.ScreenshotShortcut);}
         var menu=new Forms.ContextMenuStrip();
         menu.Items.Add("Open FLICK Home",null,(_,_)=>shell.ShowHome());
-        menu.Items.Add("FLICK It",null,async(_,_)=>await shell.SaveClipAsync());
+        var replayMenuItem=menu.Items.Add("FLICK It",null,async(_,_)=>await shell.SaveClipAsync());
+        replayMenuItem.Enabled=shell.CanSaveReplay;menu.Opening+=(_,_)=>replayMenuItem.Enabled=shell.CanSaveReplay;
         menu.Items.Add("Open clips folder",null,(_,_)=>Shell.OpenFolder());
         menu.Items.Add("Exit",null,async(_,_)=>{await shell.StopBeforeExitAsync();Shutdown();});
         tray=new Forms.NotifyIcon{Text="FLICK - replay paused",Icon=new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory,"Assets","flick.ico")),Visible=true,ContextMenuStrip=menu};
