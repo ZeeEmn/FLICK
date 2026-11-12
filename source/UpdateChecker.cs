@@ -7,13 +7,15 @@ using System.Text.RegularExpressions;
 
 namespace Rewind;
 internal enum UpdateState { Current, Available, Unavailable }
-internal sealed record UpdateResult(UpdateState State,string Message,string? Tag=null)
+internal sealed record UpdateResult(UpdateState State,string Message,string? Tag=null,UpdateAsset? Installer=null)
 {
     internal string? ReleaseUrl=>Tag is null?null:"https://github.com/ZeeEmn/FLICK/releases/tag/"+Uri.EscapeDataString(Tag);
 }
 internal static class UpdateChecker
 {
     internal const string Endpoint="https://api.github.com/repos/ZeeEmn/FLICK/releases/latest";
+    internal static string DisplayVersion {get;}=typeof(UpdateChecker).Assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
     internal static Version CurrentVersion {get {var v=Assembly.GetExecutingAssembly().GetName().Version!;return new(v.Major,v.Minor,Math.Max(0,v.Build));}}
     private static readonly object Gate=new();
     private static Task<UpdateResult>? running;
@@ -43,8 +45,31 @@ internal static class UpdateChecker
             if(!root.TryGetProperty("tag_name",out var tagValue)||tagValue.ValueKind!=JsonValueKind.String)return new(UpdateState.Unavailable,"The release version could not be read.");
             string tag=tagValue.GetString()!;
             if(tag.Length>40||!Regex.IsMatch(tag,@"\Av?\d+\.\d+\.\d+\z",RegexOptions.CultureInvariant)||!Version.TryParse(tag.TrimStart('v'),out var version))return new(UpdateState.Unavailable,"The release version format is unsupported.");
-            return version>current?new(UpdateState.Available,"FLICK "+version.ToString(3)+" is available.",tag):new(UpdateState.Current,"FLICK "+current.ToString(3)+" is up to date.");
+            return version>current?new(UpdateState.Available,"FLICK "+version.ToString(3)+" is available.",tag,FindInstaller(root,tag,version)):new(UpdateState.Current,"FLICK "+current.ToString(3)+" is up to date.");
         }catch(OperationCanceledException){return new(UpdateState.Unavailable,cancellation.IsCancellationRequested?"Update check cancelled.":"Update check timed out. Recording is unaffected.");}
         catch(Exception e) when(e is HttpRequestException or IOException or JsonException or InvalidOperationException or FormatException){return new(UpdateState.Unavailable,"Unable to check for updates. Check your connection and try again.");}
     }
+    private static UpdateAsset? FindInstaller(JsonElement release,string tag,Version version)
+    {
+        if(!release.TryGetProperty("assets",out var assets)||assets.ValueKind!=JsonValueKind.Array)return null;
+        UpdateAsset? result=null;
+        foreach(var asset in assets.EnumerateArray())
+        {
+            string? name=StringProperty(asset,"name");
+            if(name!=$"FLICK-V{version.ToString(3)}-Setup.msi"&&
+                (version.Build!=0||name!=$"FLICK-V{version.ToString(2)}-Setup.msi"))continue;
+            string url=$"https://github.com/ZeeEmn/FLICK/releases/download/{tag}/{name}";
+            string? digest=StringProperty(asset,"digest");
+            if(StringProperty(asset,"state")!="uploaded"||StringProperty(asset,"browser_download_url")!=url||
+                digest is null||!Regex.IsMatch(digest,@"\Asha256:[a-fA-F0-9]{64}\z")||
+                !asset.TryGetProperty("size",out var sizeValue)||sizeValue.ValueKind!=JsonValueKind.Number||!sizeValue.TryGetInt64(out long size)||
+                size<=0||size>UpdateInstaller.MaximumBytes)continue;
+            if(result is not null)return null;
+            result=new UpdateAsset(new Uri(url),size,digest[7..]);
+        }
+        return result;
+    }
+
+    private static string? StringProperty(JsonElement item,string key)
+        =>item.ValueKind==JsonValueKind.Object&&item.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.String?value.GetString():null;
 }

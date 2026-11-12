@@ -14,8 +14,9 @@ internal sealed class ProductSettings
     public string? StoragePath {get;set;}
     public List<AudioSourceSetting> AudioSources {get;set;}=new();
     public int Seconds {get;set;}=60;
-    public string Profile {get;set;}="Default";
+    public string Profile {get;set;}="Balanced";
     public int FrameRate {get;set;}=60;
+    public string CaptureBackend {get;set;}=WgcCapture.Dxgi;
     public string Codec {get;set;}="h264";
     public bool Desktop {get;set;}=true;
     public bool Mic {get;set;}=true;
@@ -24,15 +25,17 @@ internal sealed class ProductSettings
     public string SaveShortcut {get;set;}="Alt + F10";
     public string ScreenshotShortcut {get;set;}="Alt + 0";
     public bool LaunchOnLogin {get;set;}=true;
+    public bool AutoResumeReplay {get;set;}
     internal void Normalize(){
         Profile=QualityProfiles.Normalize(Profile);FrameRate=FrameRate==30?30:60;
+        CaptureBackend=WgcCapture.Normalize(CaptureBackend);
         if(HudPosition is not ("Top-Right" or "Top-Left" or "Bottom-Right" or "Bottom-Left"))HudPosition="Top-Right";
         if(ThemeVariant is not ("System Default" or "Pure Dark Onyx" or "Light Mode"))ThemeVariant="System Default";
         if(!ThemePalette.ValidHex(AccentHex))AccentHex=ThemePalette.DefaultAccent;
         AudioSources=(AudioSources??new()).Where(a=>!string.IsNullOrWhiteSpace(a.Id)&&a.Id.Length<=2048).DistinctBy(a=>a.Id).Take(6).ToList();
         try{if(StoragePath is not null)StoragePath=LocalPaths.Require(StoragePath);}catch{StoragePath=null;}
         Codec="h264"; // Video encoding is automatic; migrate old manual HEVC preferences.
-        Seconds=MemoryPolicy.ClampSeconds(Seconds,Profile,MemoryPolicy.Available());
+        Seconds=Math.Clamp(Seconds,1,300);
         if(InputId?.Length>2048)InputId=null;
         var used=new HashSet<(uint,uint)>();
         string Unique(string value,string fallback){foreach(string candidate in new[]{value,fallback,"Alt + Z","Alt + F10","Alt + 0","Ctrl + Alt + F12","Ctrl + Shift + F12"})try{if(candidate.Length<=64&&used.Add(Shortcut.Parse(candidate)))return candidate;}catch(FormatException){}catch(NullReferenceException){}throw new InvalidOperationException("No valid shortcut available.");}
@@ -53,7 +56,7 @@ internal sealed class ProductSettings
     }
     private static readonly object SaveGate=new();
     internal void Save(){lock(SaveGate){Normalize();Directory.CreateDirectory(ReplayEngine.DataFolder);string path=Path.Combine(ReplayEngine.DataFolder,"preferences.json"),temp=path+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(this));File.Move(temp,path,true);}}
-    internal void ApplyStartup(){using var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");if(LaunchOnLogin)key.SetValue("FLICK","\""+Environment.ProcessPath+"\" --background");else key.DeleteValue("FLICK",false);
+    internal void ApplyStartup(){using var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");if(LaunchOnLogin)key.SetValue("FLICK","\""+Environment.ProcessPath+"\"");else key.DeleteValue("FLICK",false);
         if(key.GetValue("REWIND") is string legacy&&legacy.StartsWith('"')){int end=legacy.IndexOf('"',1);if(end>1){string? directory=Path.GetDirectoryName(legacy[1..end]);if(directory is not null&&File.Exists(Path.Combine(directory,"REWIND.dll"))&&File.Exists(Path.Combine(directory,"NAudio.Wasapi.dll")))key.DeleteValue("REWIND",false);}}
     }
 }

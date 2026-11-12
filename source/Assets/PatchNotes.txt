@@ -1,0 +1,43 @@
+# Patch Notes V1.2:
+
+## New:
+
+### Windows Graphics Capture (Beta)
+In earlier stages of testing FLICK, Windows Graphics Capture (WGC) performed much better than DXGI on my test setup. I measured a 0.5–1% performance impact compared to 3% with DXGI, which made it an ideal option until I realized that on my Windows 10 setup, it left a yellow border on the screen during capture and caused micro-stutters. DXGI is still the default. Windows 11 users can try WGC in Settings.
+
+## QOL Changes:
+
+### Enhanced Clip Viewer
+The viewer opens in a larger window with space around it. Click the video to play or pause, use Next Clip to browse in gallery order, and adjust playback volume without changing the saved clip. Scrubbing keeps audio quiet, and the trim markers can select a cut between keyframes.
+
+### Capture Settings Lock
+I noticed a number of my testers tried to adjust the replay duration slider while replay was on, which caused some confusion. Replay duration, quality, frame rate, and capture backend now require pausing first. Hover over the locked capture controls for a reminder. The Default profile is now called Balanced.
+
+### Optional Replay Auto-Resume
+Some testers forgot to resume replay after adjusting capture settings. I added an option that resumes recording after two minutes of being paused and shows a notification. It’s off by default.
+
+### Quick Clip Renaming
+Rename a clip from the gallery. Its thumbnail carries over, and FLICK prevents overwriting another clip with the same name.
+
+### Storage Usage
+Settings shows how much space clips and screenshots take up in the selected folder, alongside the drive’s free space and total capacity.
+
+### Patch Notes on Demand
+FLICK Home opens on launch. Patch Notes opens once after an update and can be reopened from the Home footer anytime.
+
+### In-App Updates
+Check for updates opens a FLICK window. Download the verified installer while replay stays on, then choose Install update when you’re ready. FLICK finishes pending saves before closing for installation.
+
+## BUGFIXES:
+
+### Longer High-Quality Replays
+I found a fixed 768 MiB video buffer cap that limited longer clips at high quality even when there was RAM available. FLICK now bases the buffer budget on available memory and shows the effective limit if it’s shorter than the selected duration.
+
+### Accurate Trim Boundaries
+The trimming tool copied compressed video packets, which made cuts snap to keyframes. Keep selected range and Remove selected middle now re-encode at the chosen markers and verify the output duration.
+
+### Replay Saves Require Active Capture
+FLICK It and its shortcut now block new saves while replay is paused, starting, stopping, or recovering.
+
+### Windows Volume Mixer Cleanup
+Desktop-audio capture no longer creates an extra FLICK slider in Windows Volume Mixer. FLICK still records desktop audio and microphone tracks.

@@ -1,5 +1,5 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="FLICK" Manufacturer="FLICK" Version="1.1.0" Language="1033"
+  <Package Name="FLICK" Manufacturer="FLICK" Version="1.2.0" Language="1033"
            UpgradeCode="A9175990-3D86-4E4B-A6ED-C4F73E916453" Scope="perUser" InstallerVersion="500" Compressed="yes">
     <MajorUpgrade DowngradeErrorMessage="A newer version of FLICK is already installed." Schedule="afterInstallInitialize" />
     <!-- Migrate the unpublished preview installer without treating its version as a public release. -->
@@ -44,7 +44,7 @@
       <RegistryValue Root="HKCU" Key="Software\FLICK\Installer" Name="DesktopShortcut" Value="1" Type="integer" KeyPath="yes" />
     </Component>
     <Component Id="StartupRegistration" Directory="INSTALLFOLDER" Guid="E3906C4C-C414-49F9-B5FA-BFF9C93A64DA" Condition="STARTONLOGIN = &quot;1&quot;" Transitive="yes">
-      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="FLICK" Value="&quot;[INSTALLFOLDER]FLICK.exe&quot; --background" Type="string" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="FLICK" Value="&quot;[INSTALLFOLDER]FLICK.exe&quot;" Type="string" KeyPath="yes" />
     </Component>
     <Feature Id="FLICK" Title="FLICK" Level="1">
       <ComponentGroupRef Id="Payload" /><ComponentRef Id="Shortcuts" /><ComponentRef Id="DesktopLink" /><ComponentRef Id="StartupRegistration" />

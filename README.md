@@ -1,10 +1,10 @@
-# FLICK V1.1
+# FLICK V1.2
 
 **Save the moment. Keep playing.**
 
-### [Download FLICK for Windows (.msi)](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1.1-Setup.msi)
+### [Download FLICK for Windows (.msi)](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1.2-Setup.msi)
 
-[Portable ZIP](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1.1-Portable.zip) | [All release files](https://github.com/ZeeEmn/FLICK/releases/latest)
+[Portable ZIP](https://github.com/ZeeEmn/FLICK/releases/latest/download/FLICK-V1.2-Portable.zip) | [All release files](https://github.com/ZeeEmn/FLICK/releases/latest)
 
 FLICK is a free, open-source instant-replay recorder for Windows. It runs in the
 background, ready to save recent gameplay with a shortcut. Record locally, capture
@@ -24,9 +24,10 @@ needed to use FLICK.
 - **Hardware encoding:** automatic NVIDIA NVENC, AMD AMF, or Intel Quick Sync selection when supported.
 - **Your quality, your choice:** five profiles with 30 or 60 FPS recording targets.
 - **Separate audio tracks:** record desktop audio and microphone independently, with additional device endpoints available in the mixer.
-- **Built-in clip library:** cached thumbnails, inline playback, trimming, and middle-section cuts.
+- **Built-in clip library:** cached thumbnails, clip renaming, a larger viewer, trimming, and middle-section cuts.
 - **Screenshots:** capture your primary display at full resolution with Alt + 0.
 - **Discord compression:** create a smaller copy of a clip for sharing.
+- **Windows 11 capture beta:** opt into Windows Graphics Capture in Settings. DXGI remains the default.
 - **Quick sidebar:** access recording controls with Alt + Z.
 - **Make it yours:** configurable shortcuts, accent colours, themes, storage location, and an optional corner status HUD.
 
@@ -45,17 +46,17 @@ Get the latest version from [GitHub Releases](https://github.com/ZeeEmn/FLICK/re
 
 | Download | How to use it |
 | --- | --- |
-| **FLICK-V1-Setup.msi** | Run the setup wizard. The required runtime is included. |
-| **FLICK-V1-Portable.zip** | Extract the entire folder and open FLICK.exe. Keep the included files together. |
-| **FLICK-V1-SOURCE.zip** | Application source, dependency sources, and build instructions. |
+| **FLICK-V1.2-Setup.msi** | Run the setup wizard. The required runtime is included. |
+| **FLICK-V1.2-Portable.zip** | Extract the entire folder and open FLICK.exe. Keep the included files together. |
+| **FLICK-V1.2-Source.zip** | Application source, dependency sources, and build instructions. |
 
 The installer is unsigned, so Windows may display an unknown-publisher warning.
-Exit any existing FLICK tray instance before installing an update.
+For manual installs, exit any existing FLICK tray instance before running setup. From V1.2 onward, **Check for updates** can download and verify an available installer inside FLICK.
 
 ## Start clipping
 
-1. Launch FLICK. Replay starts automatically in the system tray.
-2. Open **FLICK Home** from the tray to choose your replay length, quality, and audio sources.
+1. Launch FLICK. Home opens and replay starts automatically.
+2. Pause replay to change its length, quality, frame rate, or capture backend, then resume. Audio controls are available while recording.
 3. Play, then press **Alt + F10** to save the moment.
 4. Open **Clips** to watch, edit, or find your saved recordings.
 
@@ -84,7 +85,7 @@ Choose **30 or 60 FPS**, then select a profile:
 | --- | --- | --- |
 | Very High | Native display | 60 Mbps |
 | High | Native display | 40 Mbps |
-| Default | Native display | 25 Mbps |
+| Balanced | Native display | 25 Mbps |
 | Low | 1280 x 720 | 12 Mbps |
 | Very Low | 1280 x 720 | 6 Mbps |
 

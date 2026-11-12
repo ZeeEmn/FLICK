@@ -9,7 +9,7 @@ internal sealed class LiveCommandCanvas : Grid
     private readonly Action<string,bool> muteLane;
     // Only PCM peak levels use a timer. No native audio-meter or geometry polling.
     private readonly DispatcherTimer timer=new(DispatcherPriority.Background){Interval=TimeSpan.FromMilliseconds(125)};
-    private readonly TextBlock title=new(){Text="Currently Capturing: Full Desktop",FontSize=21,FontWeight=FontWeights.SemiBold,TextWrapping=TextWrapping.Wrap},status=new(){FontSize=11,Foreground=ThemePalette.Muted},encoder=new(){FontSize=12,TextWrapping=TextWrapping.Wrap},buffer=new(){FontSize=11,Foreground=ThemePalette.Muted};
+    private readonly TextBlock status=new(){FontSize=21,FontWeight=FontWeights.Bold},encoder=new(){FontSize=12,TextWrapping=TextWrapping.Wrap},buffer=new(){FontSize=11,Foreground=ThemePalette.Muted};
     private bool watching;
     private Window? owner;
     private int refreshQueued;
@@ -26,7 +26,8 @@ internal sealed class LiveCommandCanvas : Grid
         var top=new StackPanel{Margin=new Thickness(0,12,0,6)};
         var row=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center};
         row.Children.Add(new System.Windows.Shapes.Path{Data=Geometry.Parse("M1,2 L27,2 L27,20 L1,20 Z M14,20 L14,26 M7,26 L21,26"),Stroke=ThemePalette.Foreground,StrokeThickness=1.4,Width=31,Height=29,Stretch=Stretch.Uniform,Margin=new Thickness(0,0,14,0)});
-        row.Children.Add(title);top.Children.Add(row);status.Margin=new Thickness(45,8,0,12);top.Children.Add(status);
+        row.Children.Add(status);top.Children.Add(row);
+        top.Children.Add(new TextBlock{Text="Currently Capturing: Full Desktop",FontSize=11,Foreground=ThemePalette.Muted,Margin=new Thickness(45,8,0,12)});
         if(qualityControls is not null)top.Children.Add(qualityControls);Children.Add(top);
         var divider=new Border{Height=1,Background=ThemePalette.Divider,Margin=new Thickness(0,8,0,10)};SetRow(divider,1);Children.Add(divider);
         var matrix=new Grid{Margin=new Thickness(0,0,0,10)};matrix.ColumnDefinitions.Add(new(){Width=new GridLength(1.3,GridUnitType.Star)});matrix.ColumnDefinitions.Add(new());
@@ -58,9 +59,9 @@ internal sealed class LiveCommandCanvas : Grid
     }
     private void RefreshState()
     {
-        StatusUpdates++;status.Text=engine.Active?"Replay is running":"Replay paused";
+        StatusUpdates++;status.Text=engine.Active?"● LIVE":"● IDLE";status.Foreground=engine.Active?ThemePalette.Accent:ThemePalette.Muted;
         encoder.Text=engine.EncoderName switch{"h264_nvenc"=>"NVIDIA NVENC · H.264","h264_amf"=>"AMD AMF · H.264","h264_qsv"=>"Intel Quick Sync · H.264","libx264"=>"Software H.264",_=>engine.EncoderName};
-        var plan=engine.Plan;buffer.Text=plan is null?"Waiting for capture":$"{plan.Width} × {plan.Height} · {plan.Fps} FPS target\n{plan.Bitrate/1_000_000} Mbps · RAM buffer "+(engine.Active?"active":"paused");
+        var plan=engine.Plan;buffer.Text=plan is null?"Waiting for capture":$"{plan.Width} × {plan.Height} · {plan.Fps} FPS\n{plan.Bitrate/1_000_000} Mbps · RAM buffer "+(engine.Active?"active":"paused");
         UpdateMeters();if(engine.Active&&watching)timer.Start();else timer.Stop();
     }
     private void UpdateMeters()

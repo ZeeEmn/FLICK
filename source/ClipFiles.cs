@@ -36,40 +36,59 @@ internal static class ClipFiles
         path=Owned(path);using var lease=await AcquireAsync(path);
         await Task.Run(()=>{File.Delete(path);string metadata=ReplayEngine.MetadataPath(path);File.Delete(metadata);File.Delete(ReplayEngine.ThumbnailPath(path));});
     }
-    internal sealed record AudioTrack(int Stream,int Ordinal,string Title);
-    internal sealed record Info(double Duration,double[] Keyframes,AudioTrack[] Audio);
-    internal static async Task<Info> ProbeAsync(string path,CancellationToken cancellation=default){
+    internal static async Task<string> RenameAsync(string path,string name)
+    {
         path=Owned(path);
-        string json=await ReplayEngine.RunToolAsync("ffprobe",["-v","error","-select_streams","v:0","-skip_frame","nokey","-show_frames","-show_entries","frame=best_effort_timestamp_time:format=duration","-of","json",path],TimeSpan.FromSeconds(60),cancellation);
-        using var doc=JsonDocument.Parse(json);
-        double duration=double.Parse(doc.RootElement.GetProperty("format").GetProperty("duration").GetString()!,CultureInfo.InvariantCulture);
-        var keys=doc.RootElement.GetProperty("frames").EnumerateArray().Where(f=>f.TryGetProperty("best_effort_timestamp_time",out _)).Select(f=>double.Parse(f.GetProperty("best_effort_timestamp_time").GetString()!,CultureInfo.InvariantCulture)).ToArray();
-        if(!double.IsFinite(duration)||duration<=0||keys.Length==0)throw new InvalidDataException("No playable video/keyframes found.");string streams=await ReplayEngine.RunToolAsync("ffprobe",["-v","error","-show_entries","stream=index,codec_type:stream_tags=title,handler_name","-of","json",path],TimeSpan.FromSeconds(20),cancellation);
-        using var tracks=JsonDocument.Parse(streams);int ordinal=0;
-        var audio=tracks.RootElement.GetProperty("streams").EnumerateArray().Where(t=>t.GetProperty("codec_type").GetString()=="audio").Select(t=>new AudioTrack(t.GetProperty("index").GetInt32(),ordinal++,t.TryGetProperty("tags",out var tags)&&tags.TryGetProperty("title",out var title)?title.GetString()!:t.TryGetProperty("tags",out var handlerTags)&&handlerTags.TryGetProperty("handler_name",out var handler)&&handler.GetString()!="SoundHandler"?handler.GetString()!:"Audio "+ordinal)).ToArray();
-        return new(duration,keys,audio);
+        name=name.Trim();
+        if(name.EndsWith(".mp4",StringComparison.OrdinalIgnoreCase))name=name[..^4].TrimEnd();
+        string stem=name.Split('.',2)[0].TrimEnd();
+        if(name.Length==0||name.Length>251||name.EndsWith('.')||name.EndsWith(".saving",StringComparison.OrdinalIgnoreCase)||
+            name.IndexOfAny(Path.GetInvalidFileNameChars())>=0||
+            System.Text.RegularExpressions.Regex.IsMatch(stem,@"\A(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|(?:COM|LPT)[1-9¹²³])\z",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase|System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            throw new IOException("Enter a valid Windows filename for this clip.");
+
+        string destination=Path.Combine(Path.GetDirectoryName(path)!,name+".mp4");
+        using var lease=await AcquireAsync(path);
+        return await Task.Run(()=>{
+            if(path==destination)return path;
+            if(!string.Equals(path,destination,StringComparison.OrdinalIgnoreCase)&&File.Exists(destination))
+                throw new IOException("A clip with that name already exists in this folder.");
+            File.Move(path,destination);
+            if(!string.Equals(path,destination,StringComparison.OrdinalIgnoreCase))
+            {
+                try{MoveSidecar(ReplayEngine.MetadataPath(path),ReplayEngine.MetadataPath(destination));}
+                catch(Exception e) when(e is IOException or UnauthorizedAccessException){PrivateLog.Write("clips.log","Rename metadata: "+e.Message);}
+                try{MoveSidecar(ReplayEngine.ThumbnailPath(path),ReplayEngine.ThumbnailPath(destination));}
+                catch(Exception e) when(e is IOException or UnauthorizedAccessException){PrivateLog.Write("clips.log","Rename preview: "+e.Message);}
+            }
+            return destination;
+        });
     }
-    internal static double SnapStart(Info info,double requested)=>info.Keyframes.Where(k=>k<=requested+0.000001).DefaultIfEmpty(0).Max();
+    private static void MoveSidecar(string source,string destination)
+    {
+        if(File.Exists(source))File.Move(source,destination,true);
+        else File.Delete(destination);
+    }
+    internal sealed record AudioTrack(int Stream,int Ordinal,string Title);
+    internal sealed record Info(double Duration,AudioTrack[] Audio);
+    internal static Task<Info> ProbeAsync(string path,CancellationToken cancellation=default)=>
+        ReadOnlyVideo.ProbeAsync(Owned(path),cancellation);
     internal static async Task<string> TrimAsync(string input,double start,double end,bool overwrite,IProgress<string>? progress=null,CancellationToken cancellation=default,bool removeInterior=false,IReadOnlyCollection<int>? keepAudio=null){
         input=Owned(input);progress?.Report("Waiting for clip...");using var lease=await AcquireAsync(input,cancellation);
         var info=await ProbeAsync(input,cancellation);
         if(!double.IsFinite(start)||!double.IsFinite(end)||start<0||end<=start||end>info.Duration+0.01)throw new ArgumentOutOfRangeException(nameof(start),"Choose a valid start/end range.");
-        double actualStart=removeInterior?NextKeyframe(info,start):SnapStart(info,start);
-        double actualEnd=removeInterior?NextKeyframe(info,end):end;
+        double actualStart=start;
+        double actualEnd=Math.Min(end,info.Duration);
         if(removeInterior&&(actualStart<=0||actualEnd>=info.Duration||actualEnd<=actualStart))throw new ArgumentOutOfRangeException(nameof(start),"Choose an interior range with playable video on both sides.");
         var editable=AudioCompatibility.Editable(info.Audio);var selected=keepAudio is null?editable:editable.Where(a=>keepAudio.Contains(a.Ordinal)).ToArray();
-        var maps=new List<string>();if(selected.Length==info.Audio.Length)maps.AddRange(["-map","0"]);else{maps.AddRange(["-map","0:v:0"]);foreach(var track in selected)maps.AddRange(["-map","0:"+track.Stream]);}
+        double expected=removeInterior?info.Duration-(actualEnd-actualStart):actualEnd-actualStart;
         var before=new FileInfo(input);long length=before.Length;DateTime modified=before.LastWriteTimeUtc;
         string id=Guid.NewGuid().ToString("N")[..8];string temp=Path.Combine(Path.GetDirectoryName(input)!,Path.GetFileNameWithoutExtension(input)+"_"+id+".saving.mp4");
         string output=overwrite?input:Path.Combine(Path.GetDirectoryName(input)!,Path.GetFileNameWithoutExtension(input)+"_trim_"+id+".mp4");
         try{
-            progress?.Report("Copying selected range...");
-            if(removeInterior)await RemoveMiddleAsync(input,actualStart,actualEnd,info.Duration,temp,maps,cancellation);
-            else{
-                var args=new List<string>{"-v","error","-nostdin","-ss",actualStart.ToString("0.######",CultureInfo.InvariantCulture),"-i",input,"-t",(end-actualStart).ToString("0.######",CultureInfo.InvariantCulture)};
-                args.AddRange(maps);args.AddRange(["-c","copy","-avoid_negative_ts","make_zero","-movflags","+faststart",temp]);
-                await ReplayEngine.RunToolAsync("ffmpeg",args,TimeSpan.FromMinutes(3),cancellation);
-            }
+            await EncodeTrimAsync(input,actualStart,actualEnd,expected,temp,selected,removeInterior,progress,cancellation);
+            progress?.Report("Checking saved clip...");
             await AudioCompatibility.EnsureMixAsync(temp,cancellation);
             string check=await ReplayEngine.RunToolAsync("ffprobe",["-v","error","-show_entries","format=duration:stream=codec_type","-of","json",temp],TimeSpan.FromSeconds(20),cancellation);
             using var probe=JsonDocument.Parse(check);
@@ -77,6 +96,8 @@ internal static class ClipFiles
             double duration=double.Parse(probe.RootElement.GetProperty("format").GetProperty("duration").GetString()!,CultureInfo.InvariantCulture);
             if(probe.RootElement.GetProperty("streams").EnumerateArray().Count(s=>s.GetProperty("codec_type").GetString()=="audio")!=(selected.Length+(selected.Length>1?1:0)))throw new InvalidDataException("Edit did not preserve the selected audio tracks.");
             if(!double.IsFinite(duration)||duration<=0)throw new InvalidDataException("Trim is empty.");
+            if(Math.Abs(duration-expected)>.12)
+                throw new InvalidDataException($"The trimmed clip is {duration:F2}s. Expected {expected:F2}s. Try moving the markers slightly.");
             // Validate before replacing an existing clip, so a bad remux cannot destroy its source.
             if(overwrite){progress?.Report("Validating trimmed video...");await ReplayEngine.RunToolAsync("ffmpeg",["-v","error","-xerror","-nostdin","-threads","2","-i",temp,"-map","0:v?","-map","0:a?","-f","null","-"],TimeSpan.FromMinutes(15),cancellation);}
             before.Refresh();if(!before.Exists||before.Length!=length||before.LastWriteTimeUtc!=modified)throw new IOException("The source clip changed while editing. It has been preserved.");
@@ -87,24 +108,57 @@ internal static class ClipFiles
                 try{File.Delete(backup);}catch(IOException){} // A locked backup remains recoverable.
                 File.Delete(ReplayEngine.ThumbnailPath(input));
             }else File.Move(temp,output);
-            await File.WriteAllTextAsync(ReplayEngine.MetadataPath(output),JsonSerializer.Serialize(new{State="Trim saved",FullDecode="Pending",RequestedStart=start,ActualStart=actualStart,RequestedEnd=end,ActualEnd=actualEnd,RemovedInterior=removeInterior,KeptAudioTracks=selected.Select(a=>a.Title).ToArray(),ActualSeconds=duration,StreamCopy=true,Created=DateTimeOffset.Now}));
+            await File.WriteAllTextAsync(ReplayEngine.MetadataPath(output),JsonSerializer.Serialize(new{State="Trim saved",FullDecode="Pending",RequestedStart=start,ActualStart=actualStart,RequestedEnd=end,ActualEnd=actualEnd,RemovedInterior=removeInterior,KeptAudioTracks=selected.Select(a=>a.Title).ToArray(),ActualSeconds=duration,StreamCopy=false,Created=DateTimeOffset.Now}));
             return output;
         }finally{if(File.Exists(temp))File.Delete(temp);}
     }
-    internal static double NextKeyframe(Info info,double value)=>info.Keyframes.FirstOrDefault(k=>k>=value-.0001,info.Duration);
-    private static async Task RemoveMiddleAsync(string input,double start,double end,double duration,string output,IEnumerable<string> maps,CancellationToken cancellation){
-        string directory=Path.GetDirectoryName(input)!,id=Guid.NewGuid().ToString("N");
-        string left=Path.Combine(directory,"flick-"+id+"-a.saving.mp4"),right=Path.Combine(directory,"flick-"+id+"-b.saving.mp4"),list=Path.Combine(directory,"flick-"+id+".concat.txt");
-        try{
-            async Task Slice(double from,double length,string target){
-                var args=new List<string>{"-v","error","-nostdin","-ss",from.ToString("0.######",CultureInfo.InvariantCulture),"-i",input,"-t",length.ToString("0.######",CultureInfo.InvariantCulture)};
-                args.AddRange(maps);args.AddRange(["-c","copy","-avoid_negative_ts","make_zero","-movflags","+faststart",target]);
-                await ReplayEngine.RunToolAsync("ffmpeg",args,TimeSpan.FromMinutes(3),cancellation);
+    private static string Seconds(double value)=>value.ToString("0.######",CultureInfo.InvariantCulture);
+
+    private static async Task EncodeTrimAsync(string input,double start,double end,double duration,string output,
+        AudioTrack[] audio,bool removeInterior,IProgress<string>? progress,CancellationToken cancellation)
+    {
+        var args=new List<string>{"-v","error","-nostdin","-nostats","-progress","pipe:1"};
+        if(!removeInterior)args.AddRange(["-ss",Seconds(start)]);
+        args.AddRange(["-threads","2","-i",input]);
+        if(removeInterior)AddMiddleCut(args,start,end,audio);
+        else args.AddRange(["-t",Seconds(duration),"-map","0:v:0"]);
+        for(int i=0;i<audio.Length;i++){
+            args.AddRange(["-map",removeInterior?$"[outa{i}]":"0:"+audio[i].Stream]);
+            AudioCompatibility.Metadata(args,i,audio[i].Title,i==0);
+        }
+        args.AddRange(["-c:v","libx264","-preset","veryfast","-crf","18","-threads:v","2",
+            "-pix_fmt","yuv420p","-fps_mode","passthrough","-c:a","aac","-b:a","192k",
+            "-movflags","+faststart",output]);
+        string stage=removeInterior?"Joining the kept sections":"Encoding selected range";
+        progress?.Report(stage+"…");
+        await ReplayEngine.RunToolAsync("ffmpeg",args,TimeSpan.FromMinutes(15),cancellation,line=>{
+            const string prefix="out_time_us=";
+            if(progress is not null&&line.StartsWith(prefix,StringComparison.Ordinal)&&
+                long.TryParse(line.AsSpan(prefix.Length),CultureInfo.InvariantCulture,out long microseconds))
+            {
+                int percent=(int)Math.Clamp(microseconds/(duration*10_000),0,99);
+                progress.Report($"{stage}… {percent}%");
             }
-            await Slice(0,start,left);await Slice(end,duration-end,right);
-            await File.WriteAllTextAsync(list,"ffconcat version 1.0\nfile '"+Path.GetFileName(left)+"'\nfile '"+Path.GetFileName(right)+"'\n",cancellation);
-            await ReplayEngine.RunToolAsync("ffmpeg",["-v","error","-nostdin","-f","concat","-safe","0","-i",list,"-map","0","-c","copy","-movflags","+faststart",output],TimeSpan.FromMinutes(3),cancellation);
-        }finally{foreach(string file in new[]{left,right,list})if(File.Exists(file))File.Delete(file);}
+        });
+    }
+    private static void AddMiddleCut(List<string> args,double start,double end,AudioTrack[] audio)
+    {
+        var filters=new List<string>();
+        var segments=new List<string>();
+        for(int i=0;i<2;i++){
+            string range=i==0?$"end={Seconds(start)}":$"start={Seconds(end)}";
+            string video=$"[v{i}]";
+            filters.Add($"[0:v:0]trim={range},setpts=PTS-STARTPTS{video}");
+            segments.Add(video);
+            for(int lane=0;lane<audio.Length;lane++){
+                string label=$"[a{i}_{lane}]";
+                filters.Add($"[0:{audio[lane].Stream}]atrim={range},asetpts=PTS-STARTPTS{label}");
+                segments.Add(label);
+            }
+        }
+        string outputs="[outv]"+string.Concat(Enumerable.Range(0,audio.Length).Select(i=>$"[outa{i}]"));
+        filters.Add(string.Concat(segments)+$"concat=n=2:v=1:a={audio.Length}"+outputs);
+        args.AddRange(["-filter_complex_threads","2","-filter_complex",string.Join(";",filters),"-map","[outv]"]);
     }
 
 }

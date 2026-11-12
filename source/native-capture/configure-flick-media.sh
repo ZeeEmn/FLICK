@@ -32,7 +32,7 @@ if [ "$#" -eq 0 ] || [ "$1" != "--reuse-config" ]; then
   --enable-ffnvcodec --enable-nvenc --enable-d3d11va \
   --enable-encoder=h264_nvenc,hevc_nvenc,h264_amf,hevc_amf,h264_qsv,hevc_qsv,libx264,wrapped_avframe,aac,pcm_s16le,mjpeg,rawvideo --enable-muxer=mp4,null,wav,image2,rawvideo --enable-demuxer=mov,wav,rawvideo,concat,matroska,avi,asf,mpegps,mpegts,flv,ogg --enable-decoder=h264,hevc,aac,pcm_s16le,mjpeg,rawvideo,wrapped_avframe,vp8,vp9,av1,mpeg4,mpeg2video,wmv3,vc1,mp3,opus,vorbis,flac,ac3,eac3,pcm_f32le,pcm_s24le --enable-parser=h264,hevc,aac,vp8,vp9,av1,mpeg4video,mpegvideo,vc1,mpegaudio,opus,vorbis,flac,ac3 \
   --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb --enable-protocol=file,pipe \
-  --enable-filter=rewinddesktop,testsrc2,color,sine,format,hwupload,hwdownload,setpts,settb,scale,crop,null,amix,volume,aresample,aformat,anull \
+  --enable-filter=rewinddesktop,testsrc2,color,sine,format,hwupload,hwdownload,setpts,asetpts,trim,atrim,concat,settb,scale,crop,null,amix,volume,aresample,aformat,anull \
   --enable-indev=lavfi
 # FFmpeg make does not consistently notice changed environment compiler flags.
 # A fresh configure must not reuse objects built with a previous privacy/profile map.

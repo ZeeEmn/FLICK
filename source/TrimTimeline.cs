@@ -19,6 +19,7 @@ internal sealed class TrimTimeline : FrameworkElement
     internal TrimTimeline(){HoverMotion.Attach(this);Cursor=Cursors.SizeWE;Focusable=true;ToolTip="Drag the left or right marker to select the trim range";}
     private double X(double value)=>8+Math.Clamp(value/duration,0,1)*Math.Max(1,ActualWidth-16);
     protected override void OnRender(DrawingContext dc){
+        dc.DrawRectangle(Brushes.Transparent,null,new Rect(RenderSize));
         double y=15;dc.DrawRoundedRectangle(ThemePalette.Secondary,null,new Rect(8,y,Math.Max(1,ActualWidth-16),5),6,6);
         dc.DrawRoundedRectangle(Accent,null,new Rect(X(start),y,Math.Max(1,X(end)-X(start)),5),6,6);
         foreach(double value in new[]{start,end}){dc.DrawRoundedRectangle(Accent,null,new Rect(X(value)-4,8,8,19),6,6);}

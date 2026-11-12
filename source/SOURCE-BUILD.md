@@ -1,4 +1,4 @@
-# Build FLICK 1.1.0
+# Build FLICK 1.2.0
 
 From the repository root, run `cd source` before the commands below.
 
@@ -10,14 +10,14 @@ recordings and local preferences are excluded.
 
 1. In MSYS2 UCRT64, run `bash prepare-gold-deps.sh`. It checks pinned hashes,
    extracts packaged dependencies, builds x264 and installs NVIDIA headers.
-2. In PowerShell, run `./build-gold.ps1 -OutputDirectory C:/build/FLICK-1.1.0`.
+2. In PowerShell, run `./build-gold.ps1 -IncludeWgcBeta -OutputDirectory C:/build/FLICK-1.2.0`.
    Set `-MsysRoot` and `-DotNet` if needed. This builds native tools into a fresh
    directory, embeds their hashes, then publishes a self-contained Windows x64 app.
    Existing canonical tools are never overwritten.
 3. To rebuild only the managed application using already prepared tools:
 
    ```powershell
-   dotnet publish FLICK.csproj -c Release -r win-x64 --self-contained true -o C:/build/FLICK-1.1.0
+   dotnet publish FLICK.csproj -c Release -r win-x64 --self-contained true -o C:/build/FLICK-1.2.0
    ```
 
 The baseline worker, profile worker and editor tools use distinct configuration
@@ -44,13 +44,20 @@ README, LICENSE, dependency/runtime notices and corresponding source ZIP. Includ
 no local preferences, recordings, tests, PDBs or build logs. Then run:
 
 ```powershell
-./installer/build-setup.ps1 -PayloadDirectory C:/build/payload -OutputFile C:/build/FLICK-V1-Setup.msi -Wix ./build-tools/wix.exe
+./installer/build-setup.ps1 -PayloadDirectory C:/build/payload -OutputFile C:/build/FLICK-V1.2-Setup.msi -Wix ./build-tools/wix.exe
 ```
 
 The installer is per-user and uses Windows Installer rollback support. A native
 guard checks the application mutex and refuses installation, repair or removal
 while a recorder runs. It does not terminate recording or remove user data.
 Changes to native tools require regenerating GoldToolHashes.json and rebuilding.
+
+For the V1.2 build with WGC Beta, pass `-IncludeWgcBeta` to
+`build-gold.ps1`. It builds the WGC bridge and FFmpeg worker alongside the DXGI
+tools, embeds their hashes, and includes them in the portable build. To build the
+managed app with prebuilt WGC tools whose hashes are already in
+`GoldToolHashes.json`, pass `-p:WgcToolsDirectory=<directory>` with both
+`flick-wgc-capture.exe` and `rewind_wgc_bridge.dll` in that directory.
 
 Upstream source archives retain their original contents and licenses, including
 upstream build/test material. These are the corresponding sources of redistributed

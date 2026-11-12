@@ -6,7 +6,7 @@
     <PlatformTarget>x64</PlatformTarget><RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained><PublishTrimmed>false</PublishTrimmed>
     <Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings>
-    <AssemblyName>FLICK</AssemblyName><Product>FLICK</Product><Version>1.1.0</Version>
+    <AssemblyName>FLICK</AssemblyName><Product>FLICK</Product><Version>1.2.0</Version>
     <DebugType>none</DebugType><DebugSymbols>false</DebugSymbols>
     <Deterministic>true</Deterministic><ApplicationIcon>Assets\flick.ico</ApplicationIcon>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**;gold-deps/**;release-tools/**;installer/**</DefaultItemExcludes>
@@ -16,10 +16,13 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="GoldToolHashes.json" LogicalName="Rewind.GoldToolHashes.json" />
+    <EmbeddedResource Include="Assets/PatchNotes.txt" LogicalName="Rewind.PatchNotes.txt" />
+    <EmbeddedResource Include="installer/ApplyUpdate.ps1" LogicalName="Rewind.ApplyUpdate.ps1" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <Resource Include="Assets\Fonts\*.ttf" />
     <Content Include="Assets\flick.ico;Assets\flick.png" CopyToOutputDirectory="PreserveNewest" />
     <ReleaseVideoTool Include="$(ReleaseToolsDirectory)/flick-transcoder.exe;$(ProfileToolsDirectory)/flick-profile-capture.exe;$(ReleaseToolsDirectory)/flick-screenshot.exe;$(ReleaseToolsDirectory)/ffmpeg.exe;$(ReleaseToolsDirectory)/ffprobe.exe;$(ReleaseToolsDirectory)/rewind-desktop-capture.exe;$(BridgeToolsDirectory)/rewind_desktop_bridge.dll" />
+    <ReleaseVideoTool Condition="'$(WgcToolsDirectory)' != ''" Include="$(WgcToolsDirectory)/flick-wgc-capture.exe;$(WgcToolsDirectory)/rewind_wgc_bridge.dll" />
     <Content Include="@(ReleaseVideoTool)" Link="tools/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="RequireVideoTools" BeforeTargets="PrepareForBuild">

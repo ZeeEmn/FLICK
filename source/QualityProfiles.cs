@@ -1,15 +1,15 @@
 namespace Rewind;
-internal sealed record QualityProfile(string Name,int Bitrate,bool Native,string Parameters,string Description);
+internal sealed record QualityProfile(string Name,int Bitrate,bool Native,string Parameters);
 internal sealed record CapturePlan(int SourceWidth,int SourceHeight,int Width,int Height,int Fps,int Bitrate,bool Downscale,string Profile);
 internal static class QualityProfiles
 {
     internal static readonly QualityProfile[] All={
-        new("Very High",60_000_000,true,"Native Resolution, Very High Bitrate: 60 Mbps","Best detail, largest files."),
-        new("High",40_000_000,true,"Native Resolution, High Bitrate: 40 Mbps","Sharp video, larger files."),
-        new("Default",25_000_000,true,"Native Resolution, Average Bitrate: 25 Mbps","Balanced quality and file size."),
-        new("Low",12_000_000,false,"1280x720 Downscaled, Average-to-Low Bitrate: 12 Mbps","Smaller 720p clips."),
-        new("Very Low",6_000_000,false,"1280x720 Downscaled, Low Bitrate: 6 Mbps","Smallest 720p clips.")};
-    internal static string Normalize(string? name)=>name switch{"Very High" or "High" or "Default" or "Low" or "Very Low"=>name,"Standard"=>"Low","Extreme"=>"Very Low",_=>"Default"};
+        new("Very High",60_000_000,true,"Native Resolution, Very High Bitrate: 60 Mbps"),
+        new("High",40_000_000,true,"Native Resolution, High Bitrate: 40 Mbps"),
+        new("Balanced",25_000_000,true,"Native Resolution, Average Bitrate: 25 Mbps"),
+        new("Low",12_000_000,false,"1280x720 Downscaled, Average-to-Low Bitrate: 12 Mbps"),
+        new("Very Low",6_000_000,false,"1280x720 Downscaled, Low Bitrate: 6 Mbps")};
+    internal static string Normalize(string? name)=>name switch{"Very High" or "High" or "Balanced" or "Low" or "Very Low"=>name,"Standard"=>"Low","Extreme"=>"Very Low",_=>"Balanced"};
     internal static QualityProfile Get(string? name)=>All.First(p=>p.Name==Normalize(name));
     internal static CapturePlan Plan(string? profile,int fps,int width,int height){var p=Get(profile);if(width<320||height<180||width>3840||height>2160)throw new InvalidOperationException("This capture build supports unrotated primary displays up to 3840 × 2160. Choose a supported display resolution.");if((width&1)!=0||(height&1)!=0)throw new InvalidOperationException("H.264 capture requires even display dimensions.");return new(width,height,p.Native?width:1280,p.Native?height:720,fps==30?30:60,p.Bitrate,!p.Native,p.Name);}
     internal static string Worker(CapturePlan plan)=>plan.Downscale?"flick-transcoder":"flick-profile-capture";

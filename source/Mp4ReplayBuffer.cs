@@ -25,7 +25,13 @@ internal sealed class Mp4ReplayBuffer : Stream
     private byte[]? currentMoof;
     private long moofOffset, consumed, position, retained, totalWritten;
     private int seconds = 60;
-    private readonly long MaxBytes=MemoryPolicy.VideoLimit(MemoryPolicy.Available());
+    private readonly long MaxBytes;
+    internal Mp4ReplayBuffer():this(MemoryPolicy.Plan(60,"Balanced",MemoryPolicy.Available()).VideoBytes){}
+    internal Mp4ReplayBuffer(long maxBytes)
+    {
+        if(maxBytes<=0)throw new InvalidOperationException("Not enough available RAM to start replay safely.");
+        MaxBytes=maxBytes;
+    }
     public event Action? Updated;
     public int HistorySeconds { get { lock(gate) return seconds; } set { lock(gate) { seconds=Math.Clamp(value,1,300); Prune(); } } }
     public (double Seconds, long Bytes) Statistics { get { lock(gate) return (fragments.Count==0 ? 0 : Math.Max(0,fragments.Last!.Value.End-fragments.First!.Value.Start),retained); } }

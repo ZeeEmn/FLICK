@@ -30,7 +30,6 @@ internal sealed class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        var launchArgs=Environment.GetCommandLineArgs().Skip(1).ToArray();
         bool inspection=false;
         instance=new Mutex(true,inspection?"Local\\FLICK.InterfaceInspection":"Local\\REWIND.Development",out bool created);
         if(!created){MessageBox.Show("FLICK is already running. Exit the older tray instance before launching this version.","FLICK");Shutdown();return;}
@@ -48,19 +47,23 @@ internal sealed class App : System.Windows.Application
         var replayMenuItem=menu.Items.Add("FLICK It",null,async(_,_)=>await shell.SaveClipAsync());
         replayMenuItem.Enabled=shell.CanSaveReplay;menu.Opening+=(_,_)=>replayMenuItem.Enabled=shell.CanSaveReplay;
         menu.Items.Add("Open clips folder",null,(_,_)=>Shell.OpenFolder());
-        menu.Items.Add("Exit",null,async(_,_)=>{await shell.StopBeforeExitAsync();Shutdown();});
+        menu.Items.Add("Exit",null,async(_,_)=>{if(shell.UpdateInstalling)return;await shell.StopBeforeExitAsync();Shutdown();});
         tray=new Forms.NotifyIcon{Text="FLICK - replay paused",Icon=new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory,"Assets","flick.ico")),Visible=true,ContextMenuStrip=menu};
 
-        string? notifiedClip=null;UpdateResult? notifiedUpdate=null;shell.SavedClipNotification+=path=>{notifiedUpdate=null;notifiedClip=path;};tray.BalloonTipClicked+=async(_,_)=>{if(notifiedUpdate is {} update)Shell.OpenUpdatePage(update);else if(notifiedClip is {} path)await shell.OpenSavedClipAsync(path);else shell.ShowHome();};
-        shell.NotificationRequested+=message=>{notifiedUpdate=null;tray.ShowBalloonTip(5000,"FLICK",message,Forms.ToolTipIcon.Info);};
-        shell.UpdateAvailable+=update=>{notifiedClip=null;notifiedUpdate=update;tray.ShowBalloonTip(5000,"FLICK update available",update.Message+" Click to open the release page.",Forms.ToolTipIcon.Info);};
+        string? notifiedClip=null;shell.SavedClipNotification+=path=>notifiedClip=path;
+        tray.BalloonTipClicked+=async(_,_)=>{if(notifiedClip is {} path)await shell.OpenSavedClipAsync(path);else shell.ShowHome();};
+        shell.NotificationRequested+=message=>tray.ShowBalloonTip(5000,"FLICK",message,Forms.ToolTipIcon.Info);
         engine.Changed+=message=>Dispatcher.BeginInvoke(()=>
         {
             UpdateHud();if(tray is not null)tray.Text=engine.Active?"FLICK - recording primary monitor":"FLICK - replay paused";
         });
+        var showPatchNotes=inspection?null:PatchNotes.Prepare();
         _=shell.BeginBackgroundAsync();
+        shell.ShowHome();
+        if(!inspection&&UpdateInstaller.ReadResult() is {} installResult)
+            Dispatcher.BeginInvoke(()=>shell.ShowUpdateWindow(new UpdateResult(UpdateState.Unavailable,installResult)));
+        if(showPatchNotes is not null)Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,showPatchNotes);
         if(!inspection)_=shell.CheckForUpdatesAsync();
-        if(!inspection)tray.ShowBalloonTip(3000,"FLICK","Running in the background. Replay is starting.",Forms.ToolTipIcon.Info);
     }
     private bool SetShortcuts(string panel,string save,string screenshot)
     {

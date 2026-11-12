@@ -45,10 +45,15 @@ internal sealed class Shell : Window
     private readonly DispatcherTimer preferenceTimer=new(){Interval=TimeSpan.FromMilliseconds(350)};
     private readonly DispatcherTimer dismissTimer=new(){Interval=TimeSpan.FromMilliseconds(16)};
     private readonly DispatcherTimer autoTimer=new(){Interval=TimeSpan.FromSeconds(2)};
+    private readonly DispatcherTimer autoResumeTimer=new(){Interval=TimeSpan.FromMinutes(2)};
+    private bool notifyAutoResume;
     private Window? home;
-    private bool armed=true,changing,quitting,wasDown,overlayWanted;
+    private Window? clipViewer;
+    private bool armed=true,changing,wasDown,overlayWanted;
+    private volatile bool quitting;
     private int transition;
     private Task? startupTask;
+    private bool wgcFallback;
     private Storyboard? presentation;
     private IntPtr overlayForeground;
     private DateTime retryAfter;
@@ -60,11 +65,13 @@ internal sealed class Shell : Window
     private static readonly Brush Muted=ThemePalette.Muted;
     public event Action<string,string>? ShortcutsChanged;
     public event Action<string>? NotificationRequested;
-    public event Action<UpdateResult>? UpdateAvailable;
     private readonly CancellationTokenSource updateLifetime=new();
     private readonly List<WeakReference<Button>> updateButtons=new();
     private UpdateResult? updateResult;
     private bool updateBusy;
+    private Window? updateWindow;
+    internal bool UpdateInstalling {get;private set;}
+    private TaskCompletionSource? pendingReplaySave;
     public string PanelShortcut=>preferences.PanelShortcut;
     public string SaveShortcut=>preferences.SaveShortcut;
     public string ScreenshotShortcut=>preferences.ScreenshotShortcut;
@@ -106,6 +113,13 @@ internal sealed class Shell : Window
             wasDown=down;
         };
         autoTimer.Tick+=async(_,_)=>{if(IsVisible||home?.IsVisible==true)UpdateStates();if(!inspection&&armed&&!changing)await EnsureReplayAsync();};
+        autoResumeTimer.Tick+=async(_,_)=>{
+            if(changing)return;
+            autoResumeTimer.Stop();
+            if(inspection||!preferences.AutoResumeReplay||!CanChangeCaptureSettings)return;
+            notifyAutoResume=true;
+            await ToggleReplayAsync();
+        };
         uiEngineChanged=message=>Dispatcher.BeginInvoke(()=>{if(!quitting&&(IsVisible||home?.IsVisible==true))UpdateStates();});
         uiClipsChanged=()=>{if(quitting||Dispatcher.HasShutdownStarted||Interlocked.Exchange(ref refreshQueued,1)!=0)return;Dispatcher.BeginInvoke(DispatcherPriority.Background,()=>{Interlocked.Exchange(ref refreshQueued,0);if(quitting)return;if(home?.IsVisible==true&&homeTab is "Clips" or "Capture")ShowHomeTab(homeTab);if(IsVisible&&tab=="Clips")ShowTab("Clips");});};
         preferenceTimer.Tick+=async(_,_)=>{preferenceTimer.Stop();try{await Task.Run(preferences.Save);}catch(Exception e){Log(e.Message);}};
@@ -118,10 +132,37 @@ internal sealed class Shell : Window
         changing=true;captureNotice="Starting replay…";
         try{
             await engine.StopAsync();
-            var settings=new CaptureSettings(preferences.Profile,preferences.Seconds,preferences.Desktop,preferences.Mic,preferences.InputId,"primary","Native Desktop","h264",preferences.AudioSources.ToArray(),preferences.FrameRate);
-            startupTask=Task.Run(()=>engine.Start(settings));await startupTask;engine.SetAudio(preferences.Desktop,preferences.Mic);lastStartError="";captureNotice="Waiting for display…";
+            string backend=wgcFallback?WgcCapture.Dxgi:preferences.CaptureBackend;
+            var settings=new CaptureSettings(preferences.Profile,preferences.Seconds,preferences.Desktop,preferences.Mic,preferences.InputId,"primary",backend,"h264",preferences.AudioSources.ToArray(),preferences.FrameRate);
+            var start=Task.Run(()=>StartCaptureAsync(settings));
+            startupTask=start;
+            if(await start){
+                wgcFallback=true;
+                if(!quitting)NotificationRequested?.Invoke("Windows Graphics Capture (Beta) could not start. Using DXGI for this replay session.");
+            }
+            if(!quitting)engine.SetAudio(preferences.Desktop,preferences.Mic);
+            if(notifyAutoResume&&engine.Active&&!quitting){
+                notifyAutoResume=false;
+                NotificationRequested?.Invoke("Replay resumed automatically.");
+            }
+            lastStartError="";captureNotice="Waiting for display…";
         }catch(Exception e){retryAfter=DateTime.UtcNow.AddSeconds(e is FileNotFoundException?10:2);captureNotice=e is FileNotFoundException?"Installation incomplete — extract the entire release ZIP.":"Display unavailable — retrying automatically…";if(lastStartError!=e.Message){lastStartError=e.Message;Log(e.ToString());NotificationRequested?.Invoke(e.Message);}}
         finally{changing=false;if(IsVisible||home?.IsVisible==true)UpdateStates();if(restartPending&&!restartLoop&&!quitting&&!inspection)_=RestartAsync();}
+    }
+    private async Task<bool> StartCaptureAsync(CaptureSettings settings)
+    {
+        if(settings.CaptureApi!=WgcCapture.Beta){engine.Start(settings);return false;}
+        try{
+            engine.Start(settings);
+            await engine.WaitForWgcReadyAsync();
+            return false;
+        }catch(Exception e) when(e is IOException or InvalidOperationException or TimeoutException or Win32Exception){
+            Log("WGC startup failed: "+e.Message);
+            try{await engine.StopAsync();}
+            catch(Exception stopError) when(stopError is IOException or InvalidDataException){Log("WGC shutdown: "+stopError.Message);}
+            if(!quitting)engine.Start(settings with{CaptureApi=WgcCapture.Dxgi});
+            return true;
+        }
     }
     private static ImageSource LogoSource(){var image=new BitmapImage();image.BeginInit();image.CacheOption=BitmapCacheOption.OnLoad;image.UriSource=new Uri(Path.Combine(AppContext.BaseDirectory,"Assets","flick.png"));image.EndInit();image.Freeze();return image;}
     private static Brush Brush(string color)=>ThemePalette.Resolve(color);
@@ -131,10 +172,28 @@ internal sealed class Shell : Window
     private static void RoundClip(FrameworkElement element){void Update(){element.Clip=new RectangleGeometry(new Rect(0,0,Math.Max(0,element.ActualWidth),Math.Max(0,element.ActualHeight)),12,12);}element.SizeChanged+=(_,_)=>Update();element.Loaded+=(_,_)=>Update();}
     private static Button IconButton(string geometry,string tooltip,Brush color,Action action){var b=Button("",action);b.ToolTip=tooltip;b.Width=32;b.Height=32;b.Padding=new Thickness(8);b.Background=Brushes.Transparent;b.BorderBrush=Brushes.Transparent;b.Content=new System.Windows.Shapes.Path{Data=Geometry.Parse(geometry),Stroke=color,StrokeThickness=1.6,StrokeStartLineCap=PenLineCap.Round,StrokeEndLineCap=PenLineCap.Round,Stretch=Stretch.Uniform};return b;}
     private static bool InsideButton(DependencyObject? element){while(element is not null){if(element is System.Windows.Controls.Primitives.ButtonBase)return true;element=VisualTreeHelper.GetParent(element);}return false;}
+    private static StackPanel HeaderBrand()
+    {
+        var brand=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center};
+        brand.Children.Add(new System.Windows.Shapes.Path{Data=Geometry.Parse("M14,1 L3,13 L10,13 L6,23 L21,8 L13,8 Z"),Fill=ThemePalette.Accent,Width=17,Height=21,Stretch=Stretch.Uniform,Margin=new Thickness(0,0,8,0)});
+        var name=Text("FLICK",14);name.Foreground=ThemePalette.Accent;name.FontWeight=FontWeights.SemiBold;brand.Children.Add(name);
+        return brand;
+    }
+    internal static UIElement DialogHeader(Window window,string title)
+    {
+        var row=new DockPanel{Background=ThemePalette.Surface,Margin=new Thickness(20,10,16,10),MinHeight=44};
+        var close=IconButton("M2,2 L14,14 M14,2 L2,14","Close",Muted,window.Close);
+        System.Windows.Automation.AutomationProperties.SetName(close,"Close");
+        DockPanel.SetDock(close,Dock.Right);row.Children.Add(close);
+        var brand=HeaderBrand();DockPanel.SetDock(brand,Dock.Left);row.Children.Add(brand);
+        var caption=Text(title,13);caption.VerticalAlignment=VerticalAlignment.Center;caption.Margin=new Thickness(16,0,0,0);row.Children.Add(caption);
+        row.MouseLeftButtonDown+=(_,e)=>{if(!InsideButton(e.OriginalSource as DependencyObject)){try{window.DragMove();}catch(InvalidOperationException){}}};
+        return new Border{BorderBrush=ThemePalette.Divider,BorderThickness=new Thickness(0,0,0,1),Child=row};
+    }
     private UIElement Header(bool dashboard)
     {
         var row=new Grid{Background=Brush("#07080A"),Margin=new Thickness(20,10,16,10),MinHeight=44};row.ColumnDefinitions.Add(new());row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});row.ColumnDefinitions.Add(new());
-        var brand=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center};brand.Opacity=1;brand.Children.Add(new System.Windows.Shapes.Path{Data=Geometry.Parse("M14,1 L3,13 L10,13 L6,23 L21,8 L13,8 Z"),Fill=ThemePalette.Accent,Width=17,Height=21,Stretch=Stretch.Uniform,Margin=new Thickness(0,0,8,0)});var name=Text("FLICK",14);name.Foreground=ThemePalette.Accent;name.FontWeight=FontWeights.SemiBold;brand.Children.Add(name);row.Children.Add(brand);
+        row.Children.Add(HeaderBrand());
         if(dashboard){var tabs=Tabs(true);Grid.SetColumn(tabs,1);row.Children.Add(tabs);row.MouseLeftButtonDown+=(_,e)=>{if(!InsideButton(e.OriginalSource as DependencyObject)){try{home?.DragMove();}catch(InvalidOperationException){}}};}
         var tools=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
         if(dashboard)tools.Children.Add(IconButton("M2,8 L14,8","Minimize",Muted,()=>{if(home is not null)home.WindowState=WindowState.Minimized;}));
@@ -149,13 +208,13 @@ internal sealed class Shell : Window
     private UIElement Page(bool dashboard,string name)
     {
         var page=new Grid();page.RowDefinitions.Add(new(){Height=GridLength.Auto});page.RowDefinitions.Add(new());if(!dashboard)page.Children.Add(Tabs(false));
-        var view=name=="Capture"?CaptureView(dashboard):name=="Clips"?ClipsView(dashboard):SettingsView();
+        var view=name=="Capture"?CaptureView(dashboard):name=="Clips"?ClipsView(dashboard):SettingsView(dashboard);
         var scroll=new SmoothScrollViewer{VerticalScrollBarVisibility=name=="Clips"?ScrollBarVisibility.Disabled:ScrollBarVisibility.Hidden,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,VerticalContentAlignment=VerticalAlignment.Stretch,Content=view};
         if(name is "Capture" or "Clips" && view is FrameworkElement element)element.SetBinding(dashboard&&name=="Capture"?HeightProperty:MinHeightProperty,new System.Windows.Data.Binding("ViewportHeight"){Source=scroll});
         Grid.SetRow(scroll,1);page.Children.Add(scroll);return page;
     }
     private void ShowTab(string name){Width=name=="Settings"?Math.Min(780,SystemParameters.WorkArea.Width):430;tab=name;overlayBody.Content=Page(false,name);UpdateStates();}
-    private void ShowHomeTab(string name){if(name!=homeTab)foreach(var player in homeWorkspace.Children.OfType<ClipEditor>().ToArray())player.CloseForHide();homeTab=name;foreach(var p in homeTabs){p.Value.Background=p.Key==name?Brush("#1B2026"):Brushes.Transparent;p.Value.Foreground=p.Key==name?ThemePalette.Foreground:Muted;}homeBody.Content=Page(true,name);UpdateStates();}
+    private void ShowHomeTab(string name){if(name!=homeTab)clipViewer?.Close();homeTab=name;foreach(var p in homeTabs){p.Value.Background=p.Key==name?Brush("#1B2026"):Brushes.Transparent;p.Value.Foreground=p.Key==name?ThemePalette.Foreground:Muted;}homeBody.Content=Page(true,name);UpdateStates();}
     public void ShowHome()
     {
         if(overlayWanted||IsVisible)HidePanel();
@@ -163,7 +222,7 @@ internal sealed class Shell : Window
             home=new Window{Title="FLICK Home",WindowStyle=WindowStyle.None,ResizeMode=ResizeMode.NoResize,Width=Math.Min(1160,SystemParameters.WorkArea.Width),Height=Math.Min(790,SystemParameters.WorkArea.Height),WindowStartupLocation=WindowStartupLocation.CenterScreen,Background=Brush("#07080A"),Foreground=Foreground,FontFamily=FontFamily,FontSize=12,FontWeight=FontWeights.Medium,Icon=Icon};
             home.Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("/FLICK;component/Theme.xaml",UriKind.Relative)});
             System.Windows.Shell.WindowChrome.SetWindowChrome(home,new System.Windows.Shell.WindowChrome{CaptionHeight=0,ResizeBorderThickness=new Thickness(0),GlassFrameThickness=new Thickness(0),CornerRadius=new CornerRadius(0)});
-            homeRoot=new Grid{Background=Brush("#07080A")};var layout=new Grid();layout.RowDefinitions.Add(new(){Height=GridLength.Auto});layout.RowDefinitions.Add(new());layout.RowDefinitions.Add(new(){Height=GridLength.Auto});layout.Children.Add(Header(true));var footer=new DockPanel();var feedback=FeedbackButton();DockPanel.SetDock(feedback,Dock.Right);footer.Children.Add(feedback);footer.Children.Add(UpdateButton());Grid.SetRow(footer,2);layout.Children.Add(footer);homeWorkspace.Margin=new Thickness(28,8,28,20);homeWorkspace.Children.Add(homeBody);Grid.SetRow(homeWorkspace,1);layout.Children.Add(homeWorkspace);homeRoot.Children.Add(layout);RoundClip(homeRoot);home.Background=Brush("#07080A");home.SourceInitialized+=(_,_)=>OverlayWindow.Round(home);home.SizeChanged+=(_,_)=>OverlayWindow.Round(home);home.Content=new Border{Background=Brush("#07080A"),CornerRadius=new CornerRadius(12),Child=homeRoot};home.StateChanged+=(_,_)=>{if(home.WindowState==WindowState.Minimized){ReleaseEditors();ObserveUi(false);}};
+            homeRoot=new Grid{Background=Brush("#07080A")};var layout=new Grid();layout.RowDefinitions.Add(new(){Height=GridLength.Auto});layout.RowDefinitions.Add(new());layout.RowDefinitions.Add(new(){Height=GridLength.Auto});layout.Children.Add(Header(true));var footer=new DockPanel();var feedback=FeedbackButton();DockPanel.SetDock(feedback,Dock.Right);footer.Children.Add(feedback);footer.Children.Add(VersionLabel());footer.Children.Add(PatchNotesButton());footer.Children.Add(UpdateButton());var footerFrame=new Border{BorderBrush=ThemePalette.Divider,BorderThickness=new Thickness(0,1,0,0),Child=footer};Grid.SetRow(footerFrame,2);layout.Children.Add(footerFrame);homeWorkspace.Margin=new Thickness(28,8,28,20);homeWorkspace.Children.Add(homeBody);Grid.SetRow(homeWorkspace,1);layout.Children.Add(homeWorkspace);homeRoot.Children.Add(layout);RoundClip(homeRoot);home.Background=Brush("#07080A");home.SourceInitialized+=(_,_)=>OverlayWindow.Round(home);home.SizeChanged+=(_,_)=>OverlayWindow.Round(home);home.Content=new Border{Background=Brush("#07080A"),CornerRadius=new CornerRadius(12),Child=homeRoot};home.StateChanged+=(_,_)=>{if(home.WindowState==WindowState.Minimized){ReleaseEditors();ObserveUi(false);}};
             home.IsVisibleChanged+=(_,_)=>{if(!home.IsVisible){ReleaseEditors();if(!IsVisible)ObserveUi(false);}};
             home.Closing+=(_,e)=>{if(!quitting){e.Cancel=true;home.Hide();}};
         }
@@ -184,16 +243,43 @@ internal sealed class Shell : Window
         var qualityGroup=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,12,0,12)};
         var timeGroup=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,14,0,14)};
         var audioGroup=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,14,0,14)};
-        if(!dashboard){qualityGroup.Children.Add(CreateQualityControls());controls.Children.Add(qualityGroup);}Grid.SetRow(timeGroup,dashboard?0:1);controls.Children.Add(timeGroup);Grid.SetRow(audioGroup,dashboard?1:2);controls.Children.Add(audioGroup);
+        if(!dashboard){qualityGroup.Children.Add(CreateQualityControls());controls.Children.Add(qualityGroup);}
+        var durationHover=new CaptureSettingsHover(timeGroup){VerticalAlignment=VerticalAlignment.Center};
+        Grid.SetRow(durationHover,dashboard?0:1);controls.Children.Add(durationHover);Grid.SetRow(audioGroup,dashboard?1:2);controls.Children.Add(audioGroup);
         timeGroup.Children.Add(Text("CLIP THE LAST",11));var time=Text(Duration(preferences.Seconds),20);time.Foreground=Lime;timeGroup.Children.Add(time);
         var slider=new ReplaySlider{Seconds=preferences.Seconds};var presets=new System.Windows.Controls.Primitives.UniformGrid{Columns=5};var choices=new Dictionary<int,Button>();
         foreach(int seconds in new[]{30,60,120,180,300}){int n=seconds;var b=Button(Duration(n),()=>slider.Seconds=n);b.Padding=new Thickness(5,8,5,8);choices[n]=b;presets.Children.Add(b);}
         bool LengthLocked()=>armed||changing||engine.Active;
         void PaintTime(){time.Text=Duration(preferences.Seconds);foreach(var pair in choices){bool selected=pair.Key==preferences.Seconds;pair.Value.BorderBrush=selected?Lime:Brush("#29313B");pair.Value.Background=ThemePalette.Secondary;pair.Value.Foreground=selected?Lime:ThemePalette.Foreground;pair.Value.Effect=null;}}
-        void SetTime(int value){if(LengthLocked()){if(slider.Seconds!=preferences.Seconds)slider.Seconds=preferences.Seconds;return;}value=MemoryPolicy.ClampSeconds(value,preferences.Profile,MemoryPolicy.Available());if(slider.Seconds!=value){slider.Seconds=value;return;}if(value!=preferences.Seconds){engine.SetHistory(value);preferences.Seconds=value;SavePreferences();}PaintTime();}
-        slider.Changed+=SetTime;PaintTime();timeGroup.Children.Add(slider);timeGroup.Children.Add(presets);
-        var lengthNotice=Text("Pause replay to change",11);timeGroup.Children.Add(lengthNotice);
-        void UpdateLength(){bool locked=LengthLocked();slider.IsEnabled=!locked;presets.IsEnabled=!locked;slider.Opacity=presets.Opacity=locked?.5:1;lengthNotice.Visibility=locked?Visibility.Visible:Visibility.Collapsed;}
+        timeGroup.Children.Add(slider);timeGroup.Children.Add(presets);
+        var memoryNotice=Text("",11);memoryNotice.Foreground=Muted;timeGroup.Children.Add(memoryNotice);
+        bool refreshingLength=false;
+        void UpdateLength()
+        {
+            bool locked=LengthLocked();
+            refreshingLength=true;
+            slider.Seconds=preferences.Seconds;
+            refreshingLength=false;
+            slider.IsEnabled=!locked;presets.IsEnabled=!locked;
+            slider.Opacity=presets.Opacity=locked?.5:1;
+            durationHover.SetLocked(locked);
+            PaintTime();
+            var memory=engine.Active&&engine.CurrentMemoryPlan is {} active
+                ?active:MemoryPolicy.Plan(preferences.Seconds,preferences.Profile,MemoryPolicy.Available());
+            memoryNotice.Text=memory.MaximumSeconds switch
+            {
+                0=>"Available RAM is too low for this quality. Close other apps or lower quality.",
+                300=>"",
+                _ when memory.Seconds<preferences.Seconds=>$"Available RAM limits replay to {Duration(memory.Seconds)} of the {Duration(preferences.Seconds)} selected.",
+                _=>$"Available RAM allows up to {Duration(memory.MaximumSeconds)} at this quality."
+            };
+            memoryNotice.Visibility=memoryNotice.Text.Length==0?Visibility.Collapsed:Visibility.Visible;
+        }
+        slider.Changed+=value=>{
+            if(refreshingLength)return;
+            if(!LengthLocked()&&value!=preferences.Seconds){preferences.Seconds=value;SavePreferences();}
+            UpdateStates();
+        };
         stateUpdates[dashboard?"home-duration":"overlay-duration"]=UpdateLength;UpdateLength();
         audioGroup.Children.Add(Text("AUDIO SOURCES",11));audioGroup.Children.Add(AudioToggle("Desktop audio",true,dashboard));audioGroup.Children.Add(AudioToggle("Microphone",false,dashboard));
         audioGroup.Children.Add(Text("Input device",11));var input=new MicrophonePicker(()=>preferences.InputId,async id=>{preferences.InputId=id;SavePreferences();await RestartAsync();},!inspection);audioGroup.Children.Add(input);
@@ -220,10 +306,108 @@ internal sealed class Shell : Window
         stateUpdates[(dashboard?"home-":"overlay-")+(desktop?"desktop":"microphone")]=()=>{toggle.IsChecked=Current();state.Text=Current()?"Enabled":"Muted";};toggle.Click+=(_,_)=>Apply();return row;
     }
     private static ImageSource LoadImage(string path){var image=new BitmapImage();image.BeginInit();image.CacheOption=BitmapCacheOption.OnLoad;image.UriSource=new Uri(path);image.EndInit();image.Freeze();return image;}
-    private void OpenEditor(string path,bool trimming=true,bool dashboard=true){
-        foreach(var owner in new[]{homeWorkspace,overlayRoot})foreach(var previous in owner.Children.OfType<ClipEditor>().ToArray()){previous.CloseForHide();owner.Children.Remove(previous);}
-        var host=dashboard&&home?.IsVisible==true&&home.WindowState!=WindowState.Minimized?homeWorkspace:overlayRoot;
-        ClipEditor? editor=null;editor=new ClipEditor(path,engine,()=>{if(host.Children.Contains(editor!))host.Children.Remove(editor!);},trimming,_=>{if(dashboard)ShowHomeTab("Clips");else ShowTab("Clips");});Panel.SetZIndex(editor,100);host.Children.Add(editor);
+    private void OpenEditor(string path,bool trimming=true,bool dashboard=true)
+    {
+        if(!dashboard||home?.IsVisible!=true||home.WindowState==WindowState.Minimized)
+        {
+            ShowHome();
+            ShowHomeTab("Clips");
+        }
+
+        clipViewer?.Close();
+        string[] clips=engine.Gallery.Select(clip=>clip.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        int index=Array.FindIndex(clips,clip=>string.Equals(clip,path,StringComparison.OrdinalIgnoreCase));
+        if(index<0)
+        {
+            clips=[path,..clips];
+            index=0;
+        }
+
+        Rect workArea=SystemParameters.WorkArea;
+        var viewer=new Window
+        {
+            Owner=home,Title="FLICK Clip Viewer",WindowStyle=WindowStyle.None,ResizeMode=ResizeMode.NoResize,
+            ShowInTaskbar=false,Width=Math.Min(1600,workArea.Width*.92),Height=Math.Min(1000,workArea.Height*.91),
+            WindowStartupLocation=WindowStartupLocation.CenterScreen,Background=ThemePalette.Surface,
+            Foreground=ThemePalette.Foreground,FontFamily=FontFamily,FontSize=FontSize,Icon=Icon
+        };
+        viewer.Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("/FLICK;component/Theme.xaml",UriKind.Relative)});
+        System.Windows.Shell.WindowChrome.SetWindowChrome(viewer,new System.Windows.Shell.WindowChrome{CaptionHeight=0,ResizeBorderThickness=new Thickness(0),GlassFrameThickness=new Thickness(0),CornerRadius=new CornerRadius(0)});
+        viewer.SourceInitialized+=(_,_)=>OverlayWindow.Round(viewer);
+        viewer.Closed+=(_,_)=>{
+            if(clipViewer==viewer)clipViewer=null;
+            (viewer.Content as ClipEditor)?.CloseForHide();
+            viewer.Content=null;
+        };
+
+        void ShowClip(int current,bool edit,double volume)
+        {
+            var previous=viewer.Content as ClipEditor;
+            int next=current+1;
+            while(next<clips.Length&&!File.Exists(clips[next]))next++;
+            ClipEditor? editor=null;
+            editor=new ClipEditor(clips[current],engine,CloseCurrent,edit,_=>ShowHomeTab("Clips"),
+                next<clips.Length?level=>ShowClip(next,false,level):null,volume);
+            void CloseCurrent(){if(clipViewer==viewer&&ReferenceEquals(viewer.Content,editor))viewer.Close();}
+            previous?.CloseForHide();
+            viewer.Content=editor;
+        }
+
+        clipViewer=viewer;
+        ShowClip(index,trimming,1);
+        viewer.Show();
+    }
+    private void RenameClip(string path,bool dashboard)
+    {
+        if(!dashboard)
+        {
+            ShowHome();
+            ShowHomeTab("Clips");
+        }
+        if(home is null)return;
+
+        var dialog=new Window
+        {
+            Owner=home,Title="Rename clip",Width=415,SizeToContent=SizeToContent.Height,
+            WindowStyle=WindowStyle.None,ResizeMode=ResizeMode.NoResize,WindowStartupLocation=WindowStartupLocation.CenterOwner,
+            ShowInTaskbar=false,Background=ThemePalette.Surface,Foreground=ThemePalette.Foreground,FontFamily=FontFamily,Icon=Icon
+        };
+        dialog.Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("/FLICK;component/Theme.xaml",UriKind.Relative)});
+        var content=new StackPanel{Margin=new Thickness(18)};
+        content.Children.Add(Text("Clip name",12));
+        var input=new TextBox{Text=Path.GetFileNameWithoutExtension(path),MaxLength=255};
+        System.Windows.Automation.AutomationProperties.SetName(input,"Clip name");
+        content.Children.Add(input);
+        var feedback=Text("",11);feedback.Foreground=Muted;content.Children.Add(feedback);
+        var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
+        var cancel=new Button{Content="Cancel",IsCancel=true};
+        var save=new Button{Content="Rename",IsDefault=true};
+        actions.Children.Add(cancel);actions.Children.Add(save);content.Children.Add(actions);
+        System.Windows.Shell.WindowChrome.SetWindowChrome(dialog,new System.Windows.Shell.WindowChrome{CaptionHeight=0,ResizeBorderThickness=new Thickness(0),GlassFrameThickness=new Thickness(0),CornerRadius=new CornerRadius(0)});
+        dialog.SourceInitialized+=(_,_)=>OverlayWindow.Round(dialog);
+        var body=new StackPanel();
+        body.Children.Add(DialogHeader(dialog,"Rename clip"));
+        body.Children.Add(content);
+        dialog.Content=body;
+        dialog.Loaded+=(_,_)=>{input.Focus();input.SelectAll();};
+
+        bool busy=false;
+        dialog.Closing+=(_,e)=>e.Cancel=busy;
+        save.Click+=async(_,_)=>{
+            busy=true;save.IsEnabled=cancel.IsEnabled=input.IsEnabled=false;
+            feedback.Text="Renaming…";
+            try{await ClipFiles.RenameAsync(path,input.Text);}
+            catch(Exception e) when(e is IOException or UnauthorizedAccessException)
+            {
+                feedback.Text=e.Message;
+                busy=false;save.IsEnabled=cancel.IsEnabled=input.IsEnabled=true;
+                input.Focus();
+                return;
+            }
+            busy=false;
+            dialog.DialogResult=true;
+        };
+        if(dialog.ShowDialog()==true)_=engine.RefreshGalleryAsync();
     }
     private UIElement ClipsView(bool dashboard,int limit=60)
     {
@@ -236,6 +420,7 @@ internal sealed class Shell : Window
             else {tile.Children.Add(new Border{Height=limit==3?76:140,Background=Brush("#07080A"),Child=Text("Processing preview",11)});engine.RequestPreview(path);}
             var title=Text(Path.GetFileNameWithoutExtension(path),11);title.TextWrapping=TextWrapping.NoWrap;title.TextTrimming=TextTrimming.CharacterEllipsis;tile.Children.Add(title);tile.Children.Add(new Border{Height=1,Background=ThemePalette.Divider,Margin=new Thickness(0,6,0,4)});
             var tools=new DockPanel();var buttons=new StackPanel{Orientation=Orientation.Horizontal};DockPanel.SetDock(buttons,Dock.Right);tools.Children.Add(buttons);
+            buttons.Children.Add(IconButton("M2,3 L18,3 L18,15 L2,15 Z M6,9 L14,9","Rename clip",Muted,()=>RenameClip(path,dashboard)));
             buttons.Children.Add(IconButton("M2,14 L3,10 L12,1 L16,5 L7,14 Z M10,3 L14,7","Trim clip",Lime,()=>OpenEditor(path,true,dashboard)));
             buttons.Children.Add(IconButton("M4,4 C7,2 15,2 18,4 L21,16 L16,19 L14,16 M8,16 L6,19 L1,16 Z M7,10 A1,1 0 1 0 9,10 A1,1 0 1 0 7,10 M13,10 A1,1 0 1 0 15,10 A1,1 0 1 0 13,10","Compress for Discord",Muted,()=>ShowCompression(path,false,dashboard)));
             var trash=IconButton("M2,4 L16,4 M6,4 L6,1 L12,1 L12,4 M4,5 L5,17 L13,17 L14,5 M7,7 L7,14 M11,7 L11,14","Delete clip",Brush("#F26972"),()=>{});buttons.Children.Add(trash);
@@ -248,35 +433,134 @@ internal sealed class Shell : Window
         var gallery=new SmoothScrollViewer{Content=root,VerticalScrollBarVisibility=ScrollBarVisibility.Hidden,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};Grid.SetRow(gallery,1);page.Children.Add(gallery);
         var footer=new StackPanel{Margin=new Thickness(0,14,0,0)};footer.Children.Add(new Border{Height=1,Background=ThemePalette.Divider,Margin=new Thickness(0,0,0,12)});var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Center};actions.Children.Add(Button("Open Clips Folder",()=>OpenFolder()));var transcode=Button("⚡ Compress for Discord",ImportExternalVideo);transcode.SetResourceReference(StyleProperty,"DiscordButton");actions.Children.Add(transcode);footer.Children.Add(actions);Grid.SetRow(footer,2);page.Children.Add(footer);return page;
     }
-    private UIElement SettingsView()
+    private UIElement SettingsView(bool dashboard)
     {
         var root=new Grid{Margin=new Thickness(0,6,0,0)};root.ColumnDefinitions.Add(new());root.ColumnDefinitions.Add(new());var left=new StackPanel{Margin=new Thickness(0,0,26,0)};var right=new StackPanel{Margin=new Thickness(14,0,0,0)};root.Children.Add(left);Grid.SetColumn(right,1);root.Children.Add(right);
-        void Toggle(Panel host,string label,bool initial,Action<bool> change){var toggle=new CheckBox{IsChecked=initial};var row=new DockPanel{Margin=new Thickness(0,8,0,14)};DockPanel.SetDock(toggle,Dock.Right);row.Children.Add(toggle);row.Children.Add(Text(label));toggle.Click+=(_,_)=>{change(toggle.IsChecked==true);SavePreferences();ViewSettingsChanged?.Invoke();};host.Children.Add(row);}
+        CheckBox Toggle(Panel host,string label,bool initial,Action<bool> change){var toggle=new CheckBox{IsChecked=initial};var row=new DockPanel{Margin=new Thickness(0,8,0,14)};DockPanel.SetDock(toggle,Dock.Right);row.Children.Add(toggle);row.Children.Add(Text(label));toggle.Click+=(_,_)=>{change(toggle.IsChecked==true);SavePreferences();ViewSettingsChanged?.Invoke();};host.Children.Add(row);return toggle;}
         Toggle(left,"Launch on startup",preferences.LaunchOnLogin,value=>{preferences.LaunchOnLogin=value;if(!inspection)try{preferences.ApplyStartup();}catch(Exception e){Log(e.Message);}});
+        var autoResume=Toggle(left,"Auto-resume replay after 2 minutes",preferences.AutoResumeReplay,value=>{
+            preferences.AutoResumeReplay=value;
+            UpdateAutoResumeTimer();
+            UpdateStates();
+        });
+        autoResume.ToolTip="Automatically resume replay after it has been paused for two minutes.";
+        stateUpdates[dashboard?"home-auto-resume":"overlay-auto-resume"]=()=>autoResume.IsChecked=preferences.AutoResumeReplay;
         left.Children.Add(Text("Storage Location",11));var storage=new DockPanel{Margin=new Thickness(0,2,0,16)};var path=Text(StorageLocations.Current,11);path.TextWrapping=TextWrapping.NoWrap;path.TextTrimming=TextTrimming.CharacterEllipsis;path.ToolTip=StorageLocations.Current;path.VerticalAlignment=VerticalAlignment.Center;var browse=Button("Browse",()=>{});DockPanel.SetDock(browse,Dock.Right);storage.Children.Add(browse);storage.Children.Add(new Border{Padding=new Thickness(8),Background=ThemePalette.Secondary,CornerRadius=new CornerRadius(6),Child=path});left.Children.Add(storage);
-        browse.Click+=async(_,_)=>{using var picker=new System.Windows.Forms.FolderBrowserDialog{InitialDirectory=StorageLocations.Current,SelectedPath=StorageLocations.Current,UseDescriptionForTitle=true,Description="Choose a local FLICK clips folder"};if(picker.ShowDialog(new DialogOwner(new WindowInteropHelper(Window.GetWindow(browse)).Handle))!=System.Windows.Forms.DialogResult.OK)return;browse.IsEnabled=false;try{await Task.Run(()=>StorageLocations.Set(picker.SelectedPath));preferences.StoragePath=StorageLocations.Current;path.Text=StorageLocations.Current;path.ToolTip=path.Text;SavePreferences();await engine.RefreshGalleryAsync();}catch(Exception e){NotificationRequested?.Invoke(e.Message);}finally{browse.IsEnabled=true;}};
+        var meter=new ClipStorageMeter(engine);left.Children.Add(meter);
+        browse.Click+=async(_,_)=>{using var picker=new System.Windows.Forms.FolderBrowserDialog{InitialDirectory=StorageLocations.Current,SelectedPath=StorageLocations.Current,UseDescriptionForTitle=true,Description="Choose a local FLICK clips folder"};if(picker.ShowDialog(new DialogOwner(new WindowInteropHelper(Window.GetWindow(browse)).Handle))!=System.Windows.Forms.DialogResult.OK)return;browse.IsEnabled=false;try{await Task.Run(()=>StorageLocations.Set(picker.SelectedPath));preferences.StoragePath=StorageLocations.Current;path.Text=StorageLocations.Current;path.ToolTip=path.Text;SavePreferences();meter.Refresh();await engine.RefreshGalleryAsync();}catch(Exception e){NotificationRequested?.Invoke(e.Message);}finally{browse.IsEnabled=true;}};
         Toggle(left,"Show replay & microphone HUD",preferences.HudEnabled,value=>preferences.HudEnabled=value);
         left.Children.Add(Text("Accent color (#RRGGBB)",11));var hex=new TextBox{Text=preferences.AccentHex,MaxLength=7,MinHeight=35};hex.TextChanged+=(_,_)=>{string color=hex.Text.Trim();if(color.Length==0)color=ThemePalette.DefaultAccent;if(!ThemePalette.ValidHex(color)){hex.ToolTip="Use # followed by six hexadecimal digits.";return;}preferences.AccentHex=color;ThemePalette.Apply(color,preferences.ThemeVariant);SavePreferences();};left.Children.Add(hex);
         left.Children.Add(Text("Theme",11));var theme=new ComboBox{ItemsSource=new[]{"System Default","Pure Dark Onyx","Light Mode"},SelectedItem=preferences.ThemeVariant};theme.SelectionChanged+=(_,_)=>{preferences.ThemeVariant=(string)theme.SelectedItem;ThemePalette.Apply(preferences.AccentHex,preferences.ThemeVariant);SavePreferences();};left.Children.Add(theme);
         var audio=Button("Audio lanes · "+preferences.AudioSources.Count+" additional",()=>{var selector=new AudioSourceSelector(preferences.AudioSources,async selected=>{await Task.Run(()=>engine.SetAudioSources(selected));preferences.AudioSources=selected.ToList();SavePreferences();ViewSettingsChanged?.Invoke();},!inspection){Owner=Window.GetWindow(root)};selector.ShowDialog();});audio.Margin=new Thickness(0,18,0,6);left.Children.Add(audio);var screenshotHint=Text(ScreenshotShortcut+" saves a PNG of the primary monitor.",11);left.Children.Add(screenshotHint);stateUpdates["screenshot-hint"]=()=>screenshotHint.Text=ScreenshotShortcut+" saves a PNG of the primary monitor.";
         right.Children.Add(Text("Open overlay shortcut",11));right.Children.Add(ShortcutInput(0));right.Children.Add(Text("FLICK It shortcut",11));right.Children.Add(ShortcutInput(1));right.Children.Add(Text("Screenshot shortcut",11));right.Children.Add(ShortcutInput(2));right.Children.Add(Text("HUD Indicator Position",11));var corner=new ComboBox{ItemsSource=new[]{"Top-Right","Top-Left","Bottom-Right","Bottom-Left"},SelectedItem=preferences.HudPosition};corner.SelectionChanged+=(_,_)=>{preferences.HudPosition=(string)corner.SelectedItem;SavePreferences();ViewSettingsChanged?.Invoke();};right.Children.Add(corner);
+        AddCaptureBackendSetting(right,dashboard);
         return root;
+    }
+    private void AddCaptureBackendSetting(Panel panel,bool dashboard)
+    {
+        panel.Children.Add(Text("Capture backend",11));
+        var backends=new[]{(Id:WgcCapture.Dxgi,Label:"DXGI Desktop Duplication"),(Id:WgcCapture.Beta,Label:WgcCapture.Beta)};
+        var selector=new ComboBox{ItemsSource=backends.Select(backend=>backend.Label).ToArray()};
+        var hint=Text("",11);hint.Foreground=Muted;
+        bool refreshing=false;
+        void Refresh(){
+            refreshing=true;
+            selector.SelectedIndex=preferences.CaptureBackend==WgcCapture.Beta?1:0;
+            selector.IsEnabled=CanChangeCaptureSettings;
+            if(!selector.IsEnabled)selector.IsDropDownOpen=false;
+            hint.Text=CanChangeCaptureSettings?"Applies on resume. Windows may show a capture border in Beta."
+                :engine.Active?$"Active: {engine.ActiveBackendLabel}. Pause replay to change."
+                :"Pause replay to change capture settings.";
+            refreshing=false;
+        }
+        selector.SelectionChanged+=(_,_)=>{
+            if(refreshing)return;
+            if(!CanChangeCaptureSettings||selector.SelectedIndex<0){Refresh();return;}
+            preferences.CaptureBackend=backends[selector.SelectedIndex].Id;
+            wgcFallback=false;
+            SavePreferences();
+            UpdateStates();
+        };
+        panel.Children.Add(selector);
+        panel.Children.Add(hint);
+        stateUpdates[dashboard?"home-backend":"overlay-backend"]=Refresh;
+        Refresh();
     }
     internal bool CanChangeCaptureSettings=>!armed&&!changing&&!engine.Active&&!quitting;
     private QualityControls CreateQualityControls(){qualityControls.RemoveAll(w=>!w.TryGetTarget(out _));var controls=new QualityControls(preferences,()=>CanChangeCaptureSettings,ApplyQualityAsync);qualityControls.Add(new(controls));return controls;}
-    private Task ApplyQualityAsync(){if(!CanChangeCaptureSettings){UpdateStates();return Task.CompletedTask;}try{preferences.Seconds=MemoryPolicy.ClampSeconds(preferences.Seconds,preferences.Profile,MemoryPolicy.Available());SavePreferences();UpdateStates();}catch(Exception e){NotificationRequested?.Invoke(e.Message);}return Task.CompletedTask;}
+    private Task ApplyQualityAsync(){if(CanChangeCaptureSettings)SavePreferences();UpdateStates();return Task.CompletedTask;}
     private sealed class DialogOwner(IntPtr handle):System.Windows.Forms.IWin32Window{public IntPtr Handle=>handle;}
+    private static Button PatchNotesButton()
+    {
+        var button=Button("Patch Notes",PatchNotes.Open);
+        button.FontSize=11;
+        button.Foreground=Muted;
+        button.Background=Brushes.Transparent;
+        button.BorderThickness=new Thickness(0);
+        button.Padding=new Thickness(8,6,8,6);
+        button.Margin=new Thickness(4,0,4,8);
+        button.IsEnabled=PatchNotes.HasNotes;
+        DockPanel.SetDock(button,Dock.Right);
+        return button;
+    }
+
+    private static TextBlock VersionLabel()
+    {
+        var version=Text("FLICK v"+UpdateChecker.DisplayVersion,11);
+        version.Foreground=Muted;
+        version.VerticalAlignment=VerticalAlignment.Center;
+        version.Margin=new Thickness(8,0,8,8);
+        DockPanel.SetDock(version,Dock.Right);
+        return version;
+    }
     private Button FeedbackButton(){var link=Button("Report Bug / Give Feedback",()=>{try{FeedbackLink.Open();}catch(Exception e){NotificationRequested?.Invoke(e.Message);}});link.Foreground=Muted;link.Background=Brushes.Transparent;link.BorderThickness=new Thickness(0);link.FontSize=10;link.Padding=new Thickness(8,6,8,6);link.Margin=new Thickness(0,0,22,8);link.HorizontalAlignment=HorizontalAlignment.Right;return link;}
     private Button UpdateButton(){var button=Button("",()=>_=CheckForUpdatesAsync(true));button.Background=Brushes.Transparent;button.BorderThickness=new Thickness(0);button.Padding=new Thickness(8,6,8,6);button.Margin=new Thickness(20,0,0,8);button.HorizontalAlignment=HorizontalAlignment.Left;button.FontSize=11;updateButtons.Add(new(button));RefreshUpdateButtons();return button;}
-    private void RefreshUpdateButtons(){for(int i=updateButtons.Count-1;i>=0;i--){if(!updateButtons[i].TryGetTarget(out var button)){updateButtons.RemoveAt(i);continue;}var row=new StackPanel{Orientation=Orientation.Horizontal};row.Children.Add(new System.Windows.Shapes.Path{Data=Geometry.Parse("M12,3 A6,6 0 1 0 14,10 M12,0 L12,4 L8,4"),Stroke=ThemePalette.Accent,StrokeThickness=1.5,Width=15,Height=15,Stretch=Stretch.Uniform,Margin=new Thickness(0,0,7,0)});row.Children.Add(Text(updateBusy?"Checking for updates…":updateResult?.State==UpdateState.Available?"Update available":"Check for updates",11));button.Content=row;button.IsEnabled=!updateBusy;button.ToolTip=updateResult?.Message??"Checks GitHub Releases. No automatic downloads or installations.";}}
+    private void RefreshUpdateButtons(){for(int i=updateButtons.Count-1;i>=0;i--){if(!updateButtons[i].TryGetTarget(out var button)){updateButtons.RemoveAt(i);continue;}var row=new StackPanel{Orientation=Orientation.Horizontal};row.Children.Add(new System.Windows.Shapes.Path{Data=Geometry.Parse("M12,3 A6,6 0 1 0 14,10 M12,0 L12,4 L8,4"),Stroke=ThemePalette.Accent,StrokeThickness=1.5,Width=15,Height=15,Stretch=Stretch.Uniform,Margin=new Thickness(0,0,7,0)});row.Children.Add(Text(updateBusy?"Checking for updates…":updateResult?.State==UpdateState.Available?"Update available":"Check for updates",11));button.Content=row;button.IsEnabled=!updateBusy;button.ToolTip=updateResult?.Message??"Check GitHub for a FLICK update.";}}
     public async Task CheckForUpdatesAsync(bool manual=false){
-        if(inspection||quitting||updateBusy)return;updateBusy=true;RefreshUpdateButtons();
+        if(inspection||quitting)return;
+        if(manual&&updateWindow is {IsVisible:true}){updateWindow.Activate();return;}
+        if(updateBusy)return;updateBusy=true;RefreshUpdateButtons();
         try{var result=await UpdateChecker.CheckAsync(updateLifetime.Token);if(quitting)return;updateResult=result;
-            if(manual){if(result.State==UpdateState.Available){if(MessageBox.Show(result.Message+" Open the GitHub release page?","FLICK updates",MessageBoxButton.YesNo,MessageBoxImage.Information)==MessageBoxResult.Yes)OpenUpdatePage(result);}else MessageBox.Show(result.Message,"FLICK updates",MessageBoxButton.OK,MessageBoxImage.Information);}
-            else if(result.State==UpdateState.Available)UpdateAvailable?.Invoke(result);
+            if(manual)ShowUpdateWindow(result);
         }finally{updateBusy=false;if(!quitting)RefreshUpdateButtons();}
     }
-    internal static void OpenUpdatePage(UpdateResult result){if(result.ReleaseUrl is {} url)Process.Start(new ProcessStartInfo(url){UseShellExecute=true});}
+    internal void ShowUpdateWindow(UpdateResult result)
+    {
+        if(quitting)return;
+        if(updateWindow is {IsVisible:true}){updateWindow.Activate();return;}
+        if(home?.IsVisible!=true||home.WindowState==WindowState.Minimized)ShowHome();
+        var window=new UpdateWindow(home!,result,InstallUpdateAsync,()=>Dispatcher.BeginInvoke(exit));
+        updateWindow=window;
+        window.Closed+=(_,_)=>updateWindow=null;
+        window.Show();
+    }
+
+    private async Task InstallUpdateAsync(string path,UpdateAsset installer)
+    {
+        if(changing||restartLoop||quitting||clipViewer is not null)
+            throw new InvalidOperationException("Finish any capture changes and close the clip viewer before installing.");
+        UpdateInstalling=true;
+        bool wasArmed=armed;
+        quitting=true;armed=false;autoTimer.Stop();autoResumeTimer.Stop();UpdateSaveButtons();
+        try
+        {
+            if(startupTask is not null)await startupTask.WaitAsync(TimeSpan.FromSeconds(20));
+            if(pendingReplaySave is not null)await pendingReplaySave.Task.WaitAsync(TimeSpan.FromSeconds(120));
+            await engine.FinishPendingSaveAsync();
+            await engine.FinishValidationAsync().WaitAsync(TimeSpan.FromSeconds(45));
+            preferenceTimer.Stop();
+            await Task.Run(preferences.Save);
+            await engine.StopAsync();
+            UpdateInstaller.Start(path,installer,preferences.LaunchOnLogin);
+        }
+        catch
+        {
+            quitting=false;armed=wasArmed;UpdateInstalling=false;
+            autoTimer.Start();UpdateAutoResumeTimer();UpdateStates();
+            throw;
+        }
+    }
+
     private void ImportExternalVideo(){var picker=new Microsoft.Win32.OpenFileDialog{Title="Compress External Video",Filter="Video files|*.mp4;*.m4v;*.mov;*.mkv;*.webm;*.avi;*.wmv;*.mpg;*.mpeg;*.ts;*.flv;*.ogv|All files|*.*",CheckFileExists=true,Multiselect=false};Window owner=home?.IsVisible==true?home:this;if(picker.ShowDialog(owner)==true)try{string path=ReadOnlyVideo.LocalFile(picker.FileName);ShowCompression(path,true,owner==home);}catch(Exception e){NotificationRequested?.Invoke(e.Message);}}
     private void ShowCompression(string path,bool external,bool dashboard){var host=dashboard&&home?.IsVisible==true?homeWorkspace:overlayRoot;if(host.Children.OfType<CompressionPrompt>().Any())return;CompressionPrompt? prompt=null;prompt=new CompressionPrompt(path,external,engine,()=>host.Children.Remove(prompt!),output=>NotificationRequested?.Invoke("Compressed copy saved: "+Path.GetFileName(output)));Panel.SetZIndex(prompt,200);host.Children.Add(prompt);}
     private TextBox ShortcutInput(int kind){
@@ -293,20 +577,43 @@ internal sealed class Shell : Window
             else if(listeningField==field){listeningField=null;ShortcutCaptureStateChanged?.Invoke(false);OverlayWindow.SetMouseOnly(this,true);}
         });shortcutFields.Add(new(box));return box;
     }
-    internal async Task SaveScreenshotAsync(){try{string path=await ScreenshotCapture.SaveAsync();NotificationRequested?.Invoke("Screenshot saved: "+Path.GetFileName(path));}catch(Exception e){NotificationRequested?.Invoke(e.Message);}}
+    internal async Task SaveScreenshotAsync(){if(quitting)return;try{string path=await ScreenshotCapture.SaveAsync();engine.NotifyClipsChanged();NotificationRequested?.Invoke("Screenshot saved: "+Path.GetFileName(path));}catch(Exception e){NotificationRequested?.Invoke(e.Message);}}
     private void SavePreferences(){if(!inspection){preferenceTimer.Stop();preferenceTimer.Start();}}
     private static string Duration(int seconds)=>seconds<60?$"{seconds}s":seconds%60==0?$"{seconds/60}m":$"{seconds/60}m {seconds%60}s";
     private bool restartPending,restartLoop;
     private async Task RestartAsync(){if(inspection||quitting)return;restartPending=true;if(changing||restartLoop)return;restartLoop=true;try{while(restartPending&&!quitting){restartPending=false;changing=true;try{await engine.FinishPendingSaveAsync();await engine.StopAsync();}finally{changing=false;}await EnsureReplayAsync();}}finally{restartLoop=false;}}
-    private async Task ToggleReplayAsync(){if(changing)return;armed=!armed;if(armed)await EnsureReplayAsync();else{changing=true;UpdateStates();try{await engine.FinishPendingSaveAsync();await engine.StopAsync();}catch(Exception e){armed=engine.Active;NotificationRequested?.Invoke(e.Message);}finally{changing=false;UpdateStates();}}ShowTab(tab);if(home?.IsVisible==true)ShowHomeTab(homeTab);}
+    private void UpdateAutoResumeTimer()
+    {
+        autoResumeTimer.Stop();
+        if(preferences.AutoResumeReplay&&CanChangeCaptureSettings)autoResumeTimer.Start();
+    }
+    private async Task ToggleReplayAsync()
+    {
+        if(changing||quitting)return;
+        autoResumeTimer.Stop();
+        armed=!armed;
+        if(armed){
+            wgcFallback=false;
+            await EnsureReplayAsync();
+        }else{
+            notifyAutoResume=false;
+            changing=true;
+            UpdateStates();
+            try{await engine.FinishPendingSaveAsync();await engine.StopAsync();}
+            catch(Exception e){armed=engine.Active;NotificationRequested?.Invoke(e.Message);}
+            finally{changing=false;UpdateAutoResumeTimer();UpdateStates();}
+        }
+        ShowTab(tab);
+        if(home?.IsVisible==true)ShowHomeTab(homeTab);
+    }
     internal bool CanSaveReplay=>armed&&!changing&&engine.Active&&!quitting;
     private ReplaySaveButton SaveButton(){saveButtons.RemoveAll(w=>!w.TryGetTarget(out _));var button=new ReplaySaveButton(()=>_=SaveClipAsync());button.SetAvailable(CanSaveReplay);button.SetState(saveState);saveButtons.Add(new(button));return button;}
     private void UpdateSaveButtons(){for(int i=saveButtons.Count-1;i>=0;i--)if(saveButtons[i].TryGetTarget(out var button)){button.SetAvailable(CanSaveReplay);button.SetState(saveState);}else saveButtons.RemoveAt(i);}
     public async Task SaveClipAsync(){
         if(!CanSaveReplay){NotificationRequested?.Invoke(!armed?"Resume replay before saving a clip.":"Replay is not ready. Please try again shortly.");return;}
-        if(!saveAdmission.TryEnter())return;Guid request=saveRequest=Guid.NewGuid();saveState=1;UpdateSaveButtons();bool saved=false;
+        if(!saveAdmission.TryEnter())return;pendingReplaySave=new(TaskCreationOptions.RunContinuationsAsynchronously);Guid request=saveRequest=Guid.NewGuid();saveState=1;UpdateSaveButtons();bool saved=false;
         try{if(changing)throw new InvalidOperationException("Capture is recovering. Please try again shortly.");string file=await Task.Run(()=>engine.SaveAsync(preferences.Seconds,request));saved=true;saveState=2;if(!quitting){SavedClipNotification?.Invoke(file);NotificationRequested?.Invoke("Replay saved: "+Path.GetFileName(file));}}
-        catch(Exception e){saveState=0;NotificationRequested?.Invoke(e.Message);}finally{saveAdmission.Exit();UpdateSaveButtons();}
+        catch(Exception e){saveState=0;NotificationRequested?.Invoke(e.Message);}finally{saveAdmission.Exit();pendingReplaySave.TrySetResult();pendingReplaySave=null;UpdateSaveButtons();}
         if(saved){await Task.Delay(1200);if(!quitting&&saveRequest==request){saveState=0;UpdateSaveButtons();}}
     }
     public async Task OpenSavedClipAsync(string path){if(!await Task.Run(()=>File.Exists(path))){NotificationRequested?.Invoke("This clip is no longer available.");return;}ShowHome();ShowHomeTab("Clips");OpenEditor(path,false,true);}
@@ -314,7 +621,7 @@ internal sealed class Shell : Window
         if(enabled==uiObserved)return;uiObserved=enabled;
         if(enabled){engine.Changed+=uiEngineChanged;engine.ClipsChanged+=uiClipsChanged;}else{engine.Changed-=uiEngineChanged;engine.ClipsChanged-=uiClipsChanged;}
     }
-    private void ReleaseEditors(){foreach(var host in new[]{homeWorkspace,overlayRoot})foreach(var prompt in host.Children.OfType<CompressionPrompt>().ToArray())host.Children.Remove(prompt);foreach(var owner in new[]{homeWorkspace,overlayRoot})foreach(var editor in owner.Children.OfType<ClipEditor>().ToArray()){editor.CloseForHide();owner.Children.Remove(editor);}listeningField?.CancelCapture();}
+    private void ReleaseEditors(){clipViewer?.Close();foreach(var host in new[]{homeWorkspace,overlayRoot})foreach(var prompt in host.Children.OfType<CompressionPrompt>().ToArray())host.Children.Remove(prompt);listeningField?.CancelCapture();}
     private void UpdateStates(){for(int i=qualityControls.Count-1;i>=0;i--)if(qualityControls[i].TryGetTarget(out var control))control.Refresh();else qualityControls.RemoveAt(i);foreach(var update in stateUpdates.Values)update();UpdateSaveButtons();for(int i=shortcutFields.Count-1;i>=0;i--)if(shortcutFields[i].TryGetTarget(out var field))field.RefreshText();else shortcutFields.RemoveAt(i);}
     public void ToggleOverlay(){if(overlayWanted)HidePanel();else ShowOverlay();}
     private void CancelPresentationReady(){if(presentationReady is not null){CompositionTarget.Rendering-=presentationReady;presentationReady=null;}}
@@ -353,8 +660,8 @@ internal sealed class Shell : Window
     }
     private IntPtr Hook(IntPtr h,int message,IntPtr w,IntPtr l,ref bool handled){if(message==0x21){handled=true;return new IntPtr(3);}return IntPtr.Zero;}
     public void SetHotkeyState(bool panel,bool save,bool screenshot){hotkeyWarning=!panel?"Overlay shortcut is in use":!save?"FLICK It shortcut is in use":!screenshot?"Screenshot shortcut is in use":"";UpdateStates();}
-    public async Task StopBeforeExitAsync(){quitting=true;armed=false;autoTimer.Stop();listeningField?.CancelCapture();if(startupTask is not null)try{await startupTask.WaitAsync(TimeSpan.FromSeconds(20));}catch(Exception e){Log(e.Message);}await engine.StopAsync();await engine.FinishPendingSaveAsync();quitting=true;home?.Close();}
-    public void Release(){updateLifetime.Cancel();preferenceTimer.Stop();dismissTimer.Stop();autoTimer.Stop();ReleaseEditors();ObserveUi(false);CancelPresentationReady();presentation?.Remove(this);quitting=true;home?.Close();}
+    public async Task StopBeforeExitAsync(){quitting=true;armed=false;autoTimer.Stop();autoResumeTimer.Stop();listeningField?.CancelCapture();if(startupTask is not null)try{await startupTask.WaitAsync(TimeSpan.FromSeconds(20));}catch(Exception e){Log(e.Message);}await engine.StopAsync();await engine.FinishPendingSaveAsync();quitting=true;home?.Close();}
+    public void Release(){quitting=true;updateLifetime.Cancel();preferenceTimer.Stop();dismissTimer.Stop();autoTimer.Stop();autoResumeTimer.Stop();ReleaseEditors();ObserveUi(false);CancelPresentationReady();presentation?.Remove(this);home?.Close();}
     public static void OpenFolder(string? file=null){Directory.CreateDirectory(ReplayEngine.SaveFolder);var p=new ProcessStartInfo("explorer.exe"){UseShellExecute=true};p.ArgumentList.Add(file is null?ReplayEngine.SaveFolder:Path.GetDirectoryName(file)!);Process.Start(p);}
     private static void Log(string message){Directory.CreateDirectory(ReplayEngine.DataFolder);File.AppendAllText(Path.Combine(ReplayEngine.DataFolder,"ui.log"),DateTimeOffset.Now.ToString("O")+" "+message+Environment.NewLine);}
     internal void ShowPreview(){ShowHome();}

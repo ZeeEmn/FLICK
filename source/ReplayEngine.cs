@@ -9,6 +9,7 @@ internal sealed class ReplayEngine : IDisposable
 {
     private Process? nativeWorker;
     private Task? nativePump,nativeErrors;
+    private TaskCompletionSource? firstWgcFragment;
     private long restartAfterTicks;
     internal DateTime RestartAfterUtc=>new(Interlocked.Read(ref restartAfterTicks),DateTimeKind.Utc);
     private AudioReplay? audio;
@@ -44,6 +45,8 @@ internal sealed class ReplayEngine : IDisposable
     public string Status { get; private set; } = "Primary monitor replay is paused.";
     public (double Seconds,long Bytes) Statistics => buffer?.Statistics ?? (0,0);
     internal CaptureSettings? CurrentSettings=>settings;
+    internal ReplayMemoryPlan? CurrentMemoryPlan {get;private set;}
+    internal string ActiveBackendLabel=>settings?.CaptureApi==WgcCapture.Beta?WgcCapture.Beta:"DXGI Desktop Duplication";
     internal long EncodedBytes=>buffer?.Length??0;
     internal bool IsSaving=>saveGate.CurrentCount==0;
     internal bool PlaybackActive {get;set;}
@@ -74,7 +77,7 @@ internal sealed class ReplayEngine : IDisposable
     }
     public void Start(CaptureSettings chosen)
     {
-        if(chosen.CaptureApi=="Native Desktop"){StartNative(chosen);return;}
+        if(chosen.CaptureApi is WgcCapture.Dxgi or WgcCapture.Beta){StartNative(chosen);return;}
         throw new InvalidOperationException("Unsupported capture mode.");
     }
     private void StartNative(CaptureSettings chosen)
@@ -82,25 +85,62 @@ internal sealed class ReplayEngine : IDisposable
         if(Active || nativeWorker is not null)throw new InvalidOperationException("Replay is already running.");
         RequireVideoTools();
         if(!string.IsNullOrEmpty(chosen.DisplayId)&&chosen.DisplayId!="primary")throw new InvalidOperationException("Desktop capture supports the primary display only.");
-        chosen=chosen with{Seconds=MemoryPolicy.ClampSeconds(chosen.Seconds,chosen.Profile,MemoryPolicy.Available())};
+        var memory=MemoryPolicy.Plan(chosen.Seconds,chosen.Profile,MemoryPolicy.Available());
+        if(memory.Seconds==0)throw new InvalidOperationException("Not enough available RAM for this replay quality. Close other apps or choose a lower quality profile.");
+        chosen=chosen with{Seconds=memory.Seconds};
         var display=DxgiDisplays.Resolve(null);var plan=QualityProfiles.Plan(chosen.Profile,chosen.FrameRate,display.Width,display.Height);Plan=plan;
         var encoder=EncoderCatalog.Detect(chosen.Codec);EncoderName=encoder.Name;
-        settings=chosen;buffer?.Dispose();buffer=new Mp4ReplayBuffer{HistorySeconds=chosen.Seconds};
+        bool wgc=chosen.CaptureApi==WgcCapture.Beta;
+        string workerPath=Tool(wgc?WgcCapture.Worker:QualityProfiles.Worker(plan));
+        if(wgc)SecurityBootstrap.Verify(Path.Combine(AppContext.BaseDirectory,"tools",WgcCapture.Bridge));
+        var firstFragment=wgc?new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously):null;
+        firstWgcFragment=firstFragment;
+        settings=chosen;CurrentMemoryPlan=memory;buffer?.Dispose();buffer=new Mp4ReplayBuffer(memory.VideoBytes){HistorySeconds=chosen.Seconds};
         sessionClock.Restart();videoEpoch=-1;
         audio=new AudioReplay(sessionClock,chosen.Seconds);audio.StateChanged+=()=>AudioChanged?.Invoke();
         try{audio.SetEnabled(chosen.Desktop,chosen.Mic,chosen.InputId);audio.SetSources(chosen.AudioSources??Array.Empty<AudioSourceSetting>());}catch(Exception e){Report("Audio unavailable: "+e.Message);}
-        buffer.Updated+=()=>{if(videoEpoch<0 && buffer.Statistics.Seconds>0){var snap=buffer.TakeSnapshot(1);videoEpoch=sessionClock.Elapsed.TotalSeconds-snap.Origin-snap.Seconds;}};
-        var launch=new ProcessStartInfo(Tool(QualityProfiles.Worker(plan))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};
-        foreach(string arg in DesktopCapture.Arguments(width:plan.SourceWidth,height:plan.SourceHeight,spinUs:0,postFilter:QualityProfiles.Filter(plan,encoder),fps:plan.Fps).Concat(QualityProfiles.EncoderArguments(plan,encoder)))launch.ArgumentList.Add(arg);
+        buffer.Updated+=()=>{if(videoEpoch<0 && buffer.Statistics.Seconds>0){var snap=buffer.TakeSnapshot(1);videoEpoch=sessionClock.Elapsed.TotalSeconds-snap.Origin-snap.Seconds;firstFragment?.TrySetResult();}};
+        var launch=new ProcessStartInfo(workerPath){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};
+        string[] captureArguments=wgc?WgcCapture.Arguments(plan,encoder):DesktopCapture.Arguments(width:plan.SourceWidth,height:plan.SourceHeight,spinUs:0,postFilter:QualityProfiles.Filter(plan,encoder),fps:plan.Fps);
+        foreach(string arg in captureArguments.Concat(QualityProfiles.EncoderArguments(plan,encoder)))launch.ArgumentList.Add(arg);
         PrivateLog.Write("encoder.log",$"Selected {encoder.Name}; adapter {encoder.Adapter}; CPU fallback {encoder.Cpu}");
         if(encoder.Cpu)Report("Software encoding active; CPU usage may increase.");
         try{
             nativeWorker=Process.Start(launch)??throw new IOException("Could not start desktop capture.");
             var worker=nativeWorker;var ring=buffer;
             nativePump=worker.StandardOutput.BaseStream.CopyToAsync(ring);
-            nativeErrors=Task.Run(async()=>{string? line;while((line=await worker.StandardError.ReadLineAsync()) is not null){PrivateLog.Write("capture.log",line);}await worker.WaitForExitAsync();if(worker.ExitCode!=0){Interlocked.Exchange(ref restartAfterTicks,DateTime.UtcNow.AddSeconds(2).Ticks);EncoderCatalog.Reset();}Active=false;Report(worker.ExitCode==0?"Replay stopped.":"Capture interrupted; waiting to rebuild replay.");});
-            Active=true;Report("Replay is buffering.");
+            Active=!wgc;
+            nativeErrors=Task.Run(async()=>{
+                string? line;
+                while((line=await worker.StandardError.ReadLineAsync()) is not null){
+                    PrivateLog.Write("capture.log",line);
+                }
+                await worker.WaitForExitAsync();
+                int exitCode=worker.ExitCode;
+                if(exitCode!=0){Interlocked.Exchange(ref restartAfterTicks,DateTime.UtcNow.AddSeconds(2).Ticks);EncoderCatalog.Reset();}
+                Active=false;
+                Report(exitCode==0?"Replay stopped.":"Capture interrupted; waiting to rebuild replay.");
+            });
+            Report(wgc?"Starting Windows Graphics Capture (Beta)…":"Replay is buffering.");
         }catch{nativeWorker?.Dispose();nativeWorker=null;audio.Dispose();audio=null;throw;}
+    }
+    internal async Task WaitForWgcReadyAsync()
+    {
+        if(firstWgcFragment is null)return;
+        var ready=firstWgcFragment.Task;
+        var completed=await Task.WhenAny(ready,nativePump!,nativeErrors!).WaitAsync(TimeSpan.FromSeconds(8));
+        if(completed!=ready)throw new IOException("Windows Graphics Capture stopped before producing video.");
+        Active=true;
+        if(nativeWorker is null||nativeWorker.HasExited){
+            Active=false;
+            throw new IOException("Windows Graphics Capture stopped during startup.");
+        }
+        Report("Replay is buffering with Windows Graphics Capture (Beta).");
+    }
+    private void SignalCaptureStop(Process worker)
+    {
+        if(settings?.CaptureApi==WgcCapture.Beta)WgcCapture.StopAcquisition(worker);
+        else DesktopCapture.StopAcquisition(worker);
     }
     public void SetHistory(int seconds){if(Active)throw new InvalidOperationException("Pause replay to change the clip length.");if(buffer is not null)buffer.HistorySeconds=seconds;audio?.SetHistory(seconds);}
     internal void SetAudioSources(IReadOnlyList<AudioSourceSetting> sources){audio?.SetSources(sources);if(settings is not null)settings=settings with{AudioSources=sources};}
@@ -111,10 +151,29 @@ internal sealed class ReplayEngine : IDisposable
     public async Task StopAsync()
     {
         if(nativeWorker is not null){
-            var worker=nativeWorker;DesktopCapture.StopAcquisition(worker);
-            try{if(!worker.HasExited){await worker.StandardInput.WriteLineAsync("q");await worker.StandardInput.FlushAsync();using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(10));await worker.WaitForExitAsync(deadline.Token);}if(nativePump is not null)await nativePump;if(nativeErrors is not null)await nativeErrors;}
-            catch(OperationCanceledException){if(!worker.HasExited){worker.Kill(true);await worker.WaitForExitAsync();}Report("Capture required a forced stop.");}
-            finally{nativeWorker=null;worker.Dispose();audio?.Dispose();audio=null;Active=false;AudioChanged?.Invoke();Changed?.Invoke("Replay paused");}return;
+            var worker=nativeWorker;SignalCaptureStop(worker);
+            try{
+                using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                if(!worker.HasExited){
+                    try{
+                        await worker.StandardInput.WriteLineAsync("q".AsMemory(),deadline.Token);
+                        await worker.StandardInput.FlushAsync(deadline.Token);
+                    }catch(IOException){/* A worker can close stdin as it exits. */}
+                    await worker.WaitForExitAsync(deadline.Token);
+                }
+            }catch(OperationCanceledException){
+                if(!worker.HasExited){worker.Kill(true);await worker.WaitForExitAsync();}
+                Report("Capture required a forced stop.");
+            }finally{
+                try{await Task.WhenAll(nativePump??Task.CompletedTask,nativeErrors??Task.CompletedTask);}
+                finally{
+                    nativeWorker=null;firstWgcFragment=null;worker.Dispose();
+                    audio?.Dispose();audio=null;
+                    buffer?.Dispose();buffer=null;CurrentMemoryPlan=null;
+                    Active=false;AudioChanged?.Invoke();Changed?.Invoke("Replay paused");
+                }
+            }
+            return;
         }
     }
 
@@ -132,6 +191,7 @@ internal sealed class ReplayEngine : IDisposable
         try
         {
             if(!Active)throw new InvalidOperationException("Resume replay before saving a clip.");
+            if(settings is not null)seconds=Math.Min(seconds,settings.Seconds);
             var source=buffer??throw new InvalidOperationException("Replay has not started.");
             var snapshot=source.TakeSnapshot(seconds);
             double exportSeconds=Math.Min(snapshot.Seconds,Math.Clamp(seconds,1,300));
@@ -255,20 +315,31 @@ internal sealed class ReplayEngine : IDisposable
         if(!await saveGate.WaitAsync(TimeSpan.FromSeconds(120)))throw new TimeoutException("A pending save did not finish before exit.");
         saveGate.Release();
     }
-    public static async Task<string> RunToolAsync(string tool,IEnumerable<string> args,TimeSpan timeout,CancellationToken cancellation=default)
+    public static async Task<string> RunToolAsync(string tool,IEnumerable<string> args,TimeSpan timeout,CancellationToken cancellation=default,Action<string>? onOutputLine=null)
     {
         var start=new ProcessStartInfo(Tool(tool)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardError=true,RedirectStandardOutput=true};
         foreach(string arg in args)start.ArgumentList.Add(arg);
         using var process=Process.Start(start)??throw new IOException("Could not start video tool.");
         try{process.PriorityClass=ProcessPriorityClass.BelowNormal;}catch(InvalidOperationException){}
-        var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
+        async Task<string> ReadOutputAsync()
+        {
+            if(onOutputLine is null)return await process.StandardOutput.ReadToEndAsync();
+            while(await process.StandardOutput.ReadLineAsync() is {} line)onOutputLine(line);
+            return "";
+        }
+        var stdout=ReadOutputAsync();var stderr=process.StandardError.ReadToEndAsync();
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(cancellation);deadline.CancelAfter(timeout);
         try{await process.WaitForExitAsync(deadline.Token);}
-        catch(OperationCanceledException){try{process.Kill(true);}catch(InvalidOperationException){}throw;}
+        catch(OperationCanceledException){
+            try{process.Kill(true);}catch(InvalidOperationException){}
+            await process.WaitForExitAsync();
+            await Task.WhenAll(stdout,stderr);
+            throw;
+        }
         string error=await stderr,output=await stdout;
         if(process.ExitCode!=0)throw new IOException(string.IsNullOrWhiteSpace(error)?$"{tool} exited with code {process.ExitCode}":error[..Math.Min(error.Length,1800)]);
         return output;
     }
-    public void Dispose(){lifetime.Cancel();catalog.Changed-=NotifyClipsChanged;fullCheck?.Cancel();if(nativeWorker is not null){DesktopCapture.StopAcquisition(nativeWorker);nativeWorker.Dispose();}audio?.Dispose();
+    public void Dispose(){lifetime.Cancel();catalog.Changed-=NotifyClipsChanged;fullCheck?.Cancel();if(nativeWorker is not null){SignalCaptureStop(nativeWorker);nativeWorker.Dispose();}audio?.Dispose();
 buffer?.Dispose();}
 }

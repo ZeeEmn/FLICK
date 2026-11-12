@@ -7,6 +7,15 @@ namespace Rewind;
 // Separate bounded audio history. No changes to native video capture, leases, or synchronization.
 internal sealed class AudioReplay : IDisposable
 {
+    private sealed class MixerHiddenLoopbackCapture(MMDevice device) : WasapiLoopbackCapture(device)
+    {
+        // AUDCLNT_SESSIONFLAGS_DISPLAY_HIDE applies when WASAPI creates the session.
+        private const AudioClientStreamFlags DisplayHide=(AudioClientStreamFlags)0x20000000;
+
+        protected override AudioClientStreamFlags GetAudioClientStreamFlags()
+            =>base.GetAudioClientStreamFlags()|DisplayHide;
+    }
+
     private sealed record Packet(double Start,byte[] Bytes);
     private sealed class Track : IDisposable
     {
@@ -43,7 +52,7 @@ internal sealed class AudioReplay : IDisposable
         using var devices=new MMDeviceEnumerator();
         track.Device=input?(string.IsNullOrEmpty(id)?devices.GetDefaultAudioEndpoint(DataFlow.Capture,Role.Communications):devices.GetDevice(id)):(id is not null?devices.GetDevice(id):devices.GetDefaultAudioEndpoint(DataFlow.Render,Role.Multimedia));
         track.Title=input?"Microphone":"Desktop Audio";track.Muted=track.Device.AudioEndpointVolume.Mute;track.VolumeNotice=value=>{track.Muted=value.Muted;StateChanged?.Invoke();};track.Device.AudioEndpointVolume.OnVolumeNotification+=track.VolumeNotice;
-        track.Capture=input?new WasapiCapture(track.Device):new WasapiLoopbackCapture(track.Device);
+        track.Capture=input?new WasapiCapture(track.Device):new MixerHiddenLoopbackCapture(track.Device);
         track.Format=new WaveFormat(48000,16,input?1:2);track.Capture.WaveFormat=track.Format;
         track.Capture.DataAvailable+=(_,e)=>{
             int count=e.BytesRecorded;if(count<=0)return;byte[] data=new byte[count];if(track.Enabled&&!track.Muted)Buffer.BlockCopy(e.Buffer,0,data,0,count);

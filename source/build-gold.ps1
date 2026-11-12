@@ -1,4 +1,4 @@
-param([string]$MsysRoot='C:/msys64',[string]$OutputDirectory=(Join-Path $PSScriptRoot '../build/FLICK-1.1.0'),[switch]$ReuseNativeConfigure,[string]$DotNet='dotnet')
+param([string]$MsysRoot='C:/msys64',[string]$OutputDirectory=(Join-Path $PSScriptRoot '../build/FLICK-1.2.0'),[switch]$ReuseNativeConfigure,[string]$DotNet='dotnet',[switch]$IncludeWgcBeta)
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath($PSScriptRoot)
 $output=[IO.Path]::GetFullPath($OutputDirectory)
@@ -32,7 +32,16 @@ $mediaScript=(Join-Path $root 'native-capture/configure-flick-media.sh').Replace
 if($LASTEXITCODE -ne 0){throw 'Media editing tool build failed'}
 foreach($name in @('ffmpeg.exe','ffprobe.exe')){Copy-Item (Join-Path $root "native-capture/build-flick-media/$name") $toolDir -Force}
 
-$hashes=@{};Get-ChildItem $toolDir -File | Where-Object {$_.Name -in @('ffmpeg.exe','ffprobe.exe','rewind-desktop-capture.exe','rewind_desktop_bridge.dll','flick-screenshot.exe','flick-profile-capture.exe','flick-transcoder.exe')} | ForEach-Object {$hashes[$_.Name]=(Get-FileHash $_.FullName -Algorithm SHA256).Hash}
+if($IncludeWgcBeta){
+    & $compiler @common -shared (Join-Path $root 'wgc-capture/wgc_bridge.cpp') -o (Join-Path $toolDir 'rewind_wgc_bridge.dll') -ld3d11 -ldxgi -ldxguid -luuid -lole32 -luser32 -lruntimeobject
+    if($LASTEXITCODE -ne 0){throw 'WGC bridge build failed'}
+    $wgcScript=(Join-Path $root 'native-capture/configure-flick-wgc.sh').Replace('\','/')
+    $wgcScript='/'+$wgcScript.Substring(0,1).ToLower()+$wgcScript.Substring(2)
+    & (Join-Path $MsysRoot 'usr/bin/bash.exe') $wgcScript @options
+    if($LASTEXITCODE -ne 0){throw 'WGC capture tool build failed'}
+    Copy-Item (Join-Path $root 'native-capture/build-flick-v12-wgc/ffmpeg.exe') (Join-Path $toolDir 'flick-wgc-capture.exe')
+}
+$hashes=@{};Get-ChildItem $toolDir -File | Where-Object {$_.Extension -in @('.exe','.dll')} | ForEach-Object {$hashes[$_.Name]=(Get-FileHash $_.FullName -Algorithm SHA256).Hash}
 $hashes | ConvertTo-Json | Set-Content (Join-Path $root 'GoldToolHashes.json') -Encoding utf8
 # Existing canonical tools are immutable; reuse only an exact byte-for-byte match.
 function Copy-ImmutableTool([string]$Source,[string]$Destination){
@@ -50,6 +59,7 @@ $transcoderPrepared=Join-Path $root 'release-tools';New-Item -ItemType Directory
 Copy-ImmutableTool (Join-Path $toolDir 'flick-transcoder.exe') $transcoderPrepared
 $env:DOTNET_CLI_HOME=Join-Path $root '.dotnet-home'
 $props=@('-p:BaseIntermediateOutputPath=obj/gold/','-p:MSBuildProjectExtensionsPath=obj/gold/','-p:Platform=x64','-p:NuGetAudit=false')
+if($IncludeWgcBeta){$props+=("-p:WgcToolsDirectory="+$toolDir)}
 & $DotNet restore (Join-Path $root 'FLICK.csproj') @props --packages (Join-Path $root '.packages')
 if($LASTEXITCODE -ne 0){throw 'Managed dependency restore failed'}
 & $DotNet publish (Join-Path $root 'FLICK.csproj') @props -c Release -r win-x64 --self-contained true --no-restore -p:UseSharedCompilation=false --disable-build-servers -o $output
