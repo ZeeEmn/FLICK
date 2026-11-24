@@ -1,25 +1,11 @@
-# Patch Notes V1.3:
+# Patch Notes V1.3.1:
 
 ## New:
 
-### Multi-Segment Video Editor
-Split a clip on the timeline, remove or restore sections, and merge adjacent segments with matching edits. Crop segments independently, or resize the export using a platform preset or custom dimensions.
-
-### Display Selection
-FLICK captures the Windows primary display by default. Pause replay to select another monitor. The status HUD and screenshots follow the selected display.
+### Separate Audio Interface Channels
+In Settings → Audio lanes, open Choose channels on a compatible Windows input to record selected channels as separate tracks. Each channel can have its own name, meter, and mute control.
 
 ## QOL Changes:
 
-### Clip Viewer Controls
-Browse previous and next clips, open fullscreen, seek five seconds in either direction, and adjust volume from the keyboard. Press M or click the speaker icon to mute.
-
-### Organized Settings
-Settings are grouped by purpose, with an About section for project links.
-
-## BUGFIXES:
-
-### Screenshot Preview
-Screenshots open inside FLICK, with improved capture handling for selected displays.
-
-### In-App Updates
-Improved how FLICK downloads, verifies, and hands off installers for in-app updates.
+### Audio Device Changes While Paused
+Pause replay to change audio devices or channels. Mute and unmute still work during replay.
