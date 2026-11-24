@@ -17,6 +17,7 @@ internal sealed class ProductSettings
     public string Profile {get;set;}="Balanced";
     public int FrameRate {get;set;}=60;
     public string CaptureBackend {get;set;}=WgcCapture.Dxgi;
+    public string? CaptureDisplay {get;set;}
     public string Codec {get;set;}="h264";
     public bool Desktop {get;set;}=true;
     public bool Mic {get;set;}=true;
@@ -29,6 +30,7 @@ internal sealed class ProductSettings
     internal void Normalize(){
         Profile=QualityProfiles.Normalize(Profile);FrameRate=FrameRate==30?30:60;
         CaptureBackend=WgcCapture.Normalize(CaptureBackend);
+        if(string.IsNullOrWhiteSpace(CaptureDisplay)||CaptureDisplay.Length>260)CaptureDisplay=null;
         if(HudPosition is not ("Top-Right" or "Top-Left" or "Bottom-Right" or "Bottom-Left"))HudPosition="Top-Right";
         if(ThemeVariant is not ("System Default" or "Pure Dark Onyx" or "Light Mode"))ThemeVariant="System Default";
         if(!ThemePalette.ValidHex(AccentHex))AccentHex=ThemePalette.DefaultAccent;

@@ -15,6 +15,8 @@ internal static class OverlayWindow
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window,int command);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window,IntPtr after,int x,int y,int width,int height,uint flags);
+    [StructLayout(LayoutKind.Sequential)] private struct NativeRect{public int Left,Top,Right,Bottom;}
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window,out NativeRect bounds);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int left,int top,int right,int bottom,int width,int height);
     [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr window,IntPtr region,bool redraw);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr handle);
@@ -44,6 +46,39 @@ internal static class OverlayWindow
         return new Rect(bounds.Left/dpi.DpiScaleX,bounds.Top/dpi.DpiScaleY,bounds.Width/dpi.DpiScaleX,bounds.Height/dpi.DpiScaleY);
     }
     internal static void RestoreHome(Window window){ShowWindow(new WindowInteropHelper(window).Handle,9);window.Activate();}
+    internal static void KeepInWorkArea(Window window,System.Drawing.Rectangle area)
+    {
+        var handle=new WindowInteropHelper(window).Handle;
+        if(!GetWindowRect(handle,out var bounds))return;
+        int x=Math.Clamp(bounds.Left,area.Left,Math.Max(area.Left,area.Right-(bounds.Right-bounds.Left)));
+        int y=Math.Clamp(bounds.Top,area.Top,Math.Max(area.Top,area.Bottom-(bounds.Bottom-bounds.Top)));
+        if(x!=bounds.Left||y!=bounds.Top)SetWindowPos(handle,IntPtr.Zero,x,y,0,0,0x0001|0x0004|0x0010);
+    }
+    internal static Action? EnterFullscreen(Window window)
+    {
+        var handle=new WindowInteropHelper(window).Handle;
+        if(!GetWindowRect(handle,out var saved))return null;
+        var screen=System.Windows.Forms.Screen.FromHandle(handle).Bounds;
+        bool wasTopmost=window.Topmost;
+        void Activate(object? sender,EventArgs args)=>window.Topmost=true;
+        void Deactivate(object? sender,EventArgs args)=>window.Topmost=wasTopmost;
+        SetWindowRgn(handle,IntPtr.Zero,true);
+        window.Topmost=window.IsActive||wasTopmost;
+        window.Activated+=Activate;
+        window.Deactivated+=Deactivate;
+        const uint keepOrderAndFocus=0x0004|0x0010;
+        void Restore()
+        {
+            window.Activated-=Activate;
+            window.Deactivated-=Deactivate;
+            window.Topmost=wasTopmost;
+            SetWindowPos(handle,IntPtr.Zero,saved.Left,saved.Top,saved.Right-saved.Left,saved.Bottom-saved.Top,keepOrderAndFocus);
+            window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,()=>Round(window));
+        }
+        if(SetWindowPos(handle,IntPtr.Zero,screen.Left,screen.Top,screen.Width,screen.Height,keepOrderAndFocus))return Restore;
+        Restore();
+        return null;
+    }
     internal static void ShowWithoutActivation(Window window)
     {
         var handle=new WindowInteropHelper(window).Handle;

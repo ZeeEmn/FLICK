@@ -11,6 +11,13 @@ internal sealed class ReplaySlider : FrameworkElement
     internal ReplaySlider(){HoverMotion.Attach(this);Height=30;MinWidth=150;Focusable=true;Cursor=Cursors.Hand;MouseLeftButtonDown+=(_,e)=>{CaptureMouse();Update(e.GetPosition(this).X);e.Handled=true;};MouseMove+=(_,e)=>{if(IsMouseCaptured)Update(e.GetPosition(this).X);};MouseLeftButtonUp+=(_,_)=>ReleaseMouseCapture();PreviewKeyDown+=(_,e)=>{if(e.Key==Key.Left){Seconds--;e.Handled=true;}if(e.Key==Key.Right){Seconds++;e.Handled=true;}};}
     private void Update(double x)=>Seconds=1+(int)Math.Round(Math.Clamp((x-9)/Math.Max(1,ActualWidth-18),0,1)*299);
     protected override void OnRender(DrawingContext dc){double width=Math.Max(1,ActualWidth-18),x=9+width*(Seconds-1)/299;
+        dc.DrawRectangle(Brushes.Transparent,null,new Rect(RenderSize));
+        double hover=IsEnabled?Math.Max(IsMouseCaptured?.24:0,HoverMotion.Progress(this)*.24):0;
+        if(hover>0){
+            dc.PushOpacity(hover);
+            dc.DrawRoundedRectangle(ThemePalette.Accent,null,new Rect(7,10,width+4,10),6,6);
+            dc.Pop();
+        }
         dc.DrawRoundedRectangle(ThemePalette.Line,null,new Rect(9,13,width,4),6,6);
         dc.DrawRoundedRectangle(ThemePalette.Accent,null,new Rect(9,13,Math.Max(1,x-9),4),6,6);
         dc.DrawEllipse(ThemePalette.Accent,null,new Point(x,15),6,6);

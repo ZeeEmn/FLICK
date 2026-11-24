@@ -29,17 +29,19 @@ internal sealed class UpdateWindow : Window
         body.Children.Add(progressBar);
         var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(0,12,0,0)};
         body.Children.Add(actions);
-        var close=new Button{Content="Close"};close.Click+=(_,_)=>Close();actions.Children.Add(close);
+        var close=new Button{Content="Close"};actions.Children.Add(close);
         var primary=new Button{IsDefault=true,Visibility=Visibility.Collapsed};actions.Children.Add(primary);
         CancellationTokenSource? download=null;
         string? file=null;
         bool closed=false,installing=false;
+        void CancelOrClose(){if(download is { } active)active.Cancel();else Close();}
+        close.Click+=(_,_)=>CancelOrClose();
         Closing+=(_,e)=>e.Cancel=installing;
         Closed+=(_,_)=>{
             closed=true;download?.Cancel();
             if(file is not null)UpdateInstaller.RemoveDownload(file);
         };
-        PreviewKeyDown+=(_,e)=>{if(e.Key==System.Windows.Input.Key.Escape){Close();e.Handled=true;}};
+        PreviewKeyDown+=(_,e)=>{if(e.Key==System.Windows.Input.Key.Escape){CancelOrClose();e.Handled=true;}};
 
         if(result.Installer is not {} asset)
         {
@@ -80,7 +82,7 @@ internal sealed class UpdateWindow : Window
             try
             {
                 var progress=new Progress<double>(fraction=>{
-                    if(closed||download!=cancellation)return;
+                    if(closed||download!=cancellation||cancellation.IsCancellationRequested)return;
                     progressBar.Value=fraction;
                     detail.Text=$"Downloading update… {fraction:P0}";
                 });
@@ -91,7 +93,9 @@ internal sealed class UpdateWindow : Window
             }
             catch(Exception e) when(e is IOException or HttpRequestException or OperationCanceledException or UnauthorizedAccessException or InvalidDataException)
             {
-                if(!closed){progressBar.Visibility=Visibility.Collapsed;detail.Text=e is OperationCanceledException?"Download timed out. Try again.":"Download failed. "+e.Message;}
+                if(!closed){progressBar.Visibility=Visibility.Collapsed;detail.Text=e is OperationCanceledException
+                    ?cancellation.IsCancellationRequested?"Download cancelled. You can try again.":"Download timed out. Try again."
+                    :"Download failed. "+e.Message;}
             }
             finally
             {

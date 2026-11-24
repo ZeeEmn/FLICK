@@ -6,8 +6,9 @@ internal static class EncoderCatalog
 {
     private static readonly ConcurrentDictionary<string,EncoderChoice> Cache=new();
     internal static IEnumerable<string> Candidates(uint vendor,string codec){string suffix=vendor switch{0x10de=>"nvenc",0x1002=>"amf",0x8086=>"qsv",_=>""};if(suffix.Length>0){yield return (codec=="hevc"?"hevc_":"h264_")+suffix;if(codec=="hevc")yield return "h264_"+suffix;}yield return "libx264";}
-    internal static EncoderChoice Detect(string codec){
-        var display=DxgiDisplays.Resolve(null);var gpu=DxgiDisplays.Adapter(display.AdapterIndex);string key=$"{gpu.Luid}:{codec}";
+    internal static EncoderChoice Detect(string codec)=>Detect(codec,DxgiDisplays.Resolve(null));
+    internal static EncoderChoice Detect(string codec,DxgiDisplays.Target display){
+        var gpu=DxgiDisplays.Adapter(display.AdapterIndex);string key=$"{gpu.Luid}:{codec}";
         return Cache.GetOrAdd(key,_=>{foreach(string name in Candidates(gpu.Vendor,codec)){var choice=new EncoderChoice(name,name.StartsWith("hevc_",StringComparison.Ordinal)?"hevc":"h264",name=="libx264",name=="libx264"||name.EndsWith("_qsv",StringComparison.Ordinal),display.AdapterIndex);if(Probe(choice))return choice;}throw new InvalidOperationException("No usable encoder initialized. Update the graphics driver and check available memory.");});
     }
     internal static void Reset()=>Cache.Clear();

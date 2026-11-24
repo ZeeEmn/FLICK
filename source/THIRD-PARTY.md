@@ -2,7 +2,7 @@
 
 FLICK's original C# application/UI code is GPL-3.0-only, copyright ZeeEmn.
 See LICENSE. Separately licensed files retain their own notices. Complete
-corresponding source is included in source/FLICK-V1-SOURCE.zip in binary packages,
+corresponding source is included in the source/ directory as a ZIP archive in binary packages,
 and is also available as a separate release asset and in the repository.
 
 ## Native media tools

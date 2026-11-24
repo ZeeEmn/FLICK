@@ -12,7 +12,7 @@ internal sealed class App : System.Windows.Application
     private Forms.NotifyIcon? tray;
     private HudWindow? hud;
     private bool screenshotKey;
-    private void UpdateHud(){if(hud is not null&&shell is not null&&engine is not null){var settings=shell.Preferences;hud.Update(settings.HudEnabled,settings.HudPosition,engine.Active,engine.MicrophoneLive);}}
+    private void UpdateHud(){if(hud is not null&&shell is not null&&engine is not null){var settings=shell.Preferences;hud.Update(settings.HudEnabled,settings.HudPosition,engine.Active,engine.MicrophoneLive,engine.ActiveDisplayName);}}
     private void AudioStateChanged()=>Dispatcher.BeginInvoke(UpdateHud);
     private void ThemeSystemChanged(object sender,Microsoft.Win32.UserPreferenceChangedEventArgs args)=>Dispatcher.BeginInvoke(ThemePalette.SystemChanged);
     private Shell? shell;
@@ -55,7 +55,7 @@ internal sealed class App : System.Windows.Application
         shell.NotificationRequested+=message=>tray.ShowBalloonTip(5000,"FLICK",message,Forms.ToolTipIcon.Info);
         engine.Changed+=message=>Dispatcher.BeginInvoke(()=>
         {
-            UpdateHud();if(tray is not null)tray.Text=engine.Active?"FLICK - recording primary monitor":"FLICK - replay paused";
+            UpdateHud();if(tray is not null)tray.Text=engine.Active?"FLICK - replay recording":"FLICK - replay paused";
         });
         var showPatchNotes=inspection?null:PatchNotes.Prepare();
         _=shell.BeginBackgroundAsync();

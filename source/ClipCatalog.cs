@@ -42,7 +42,7 @@ internal sealed class ClipCatalog
                 foreach(string old in images.Keys.Where(k=>!keep.Contains(k)).ToArray())images.Remove(old);
                 return rows.ToArray();
             });
-            Volatile.Write(ref snapshot,cards);Changed?.Invoke();
+            if(!Snapshot.SequenceEqual(cards)){Volatile.Write(ref snapshot,cards);Changed?.Invoke();}
             lock(gate){if(!pending){refreshTask=null;return;}}
         }}catch(Exception e){PrivateLog.Write("catalog.log",e.Message);lock(gate)refreshTask=null;}
     }

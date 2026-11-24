@@ -16,8 +16,9 @@ internal static class DesktopCapture
     internal static void SignalEvent(string name){IntPtr signal=OpenEvent(2,false,name);if(signal!=IntPtr.Zero){try{SetEvent(signal);}finally{CloseHandle(signal);}}}
     internal static void Signal(Process worker,string kind)=>SignalEvent($"Local\\REWIND.Desktop{kind}.{worker.Id}");
     internal static void StopAcquisition(Process worker)=>Signal(worker,"Stop");
-    internal static string[] Arguments(int width=1920,int height=1080,int delay=0,bool trace=false,int spinUs=0,string? postFilter=null,int fps=60){
-        int adapter=DxgiDisplays.Resolve(null).AdapterIndex;
+    internal const string DisplayEnvironment="FLICK_CAPTURE_DISPLAY";
+    internal static string[] Arguments(int width=1920,int height=1080,int delay=0,bool trace=false,int spinUs=0,string? postFilter=null,int fps=60,int? adapterIndex=null){
+        int adapter=adapterIndex??DxgiDisplays.Resolve(null).AdapterIndex;
         return ["-hide_banner","-loglevel","warning","-nostats","-init_hw_device",$"d3d11va=rewind:{adapter}","-filter_hw_device","rewind",
            "-filter_complex",$"rewinddesktop=width={width}:height={height}:fps={fps}:spin_us={spinUs}{(delay>0?$":test_delay_ms={delay}":"")}{(trace?":trace=1":"")}{(string.IsNullOrEmpty(postFilter)?"":","+postFilter)}[captured]","-map","[captured]"];
     }

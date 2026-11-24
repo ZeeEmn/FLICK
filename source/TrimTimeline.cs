@@ -20,7 +20,14 @@ internal sealed class TrimTimeline : FrameworkElement
     private double X(double value)=>8+Math.Clamp(value/duration,0,1)*Math.Max(1,ActualWidth-16);
     protected override void OnRender(DrawingContext dc){
         dc.DrawRectangle(Brushes.Transparent,null,new Rect(RenderSize));
-        double y=15;dc.DrawRoundedRectangle(ThemePalette.Secondary,null,new Rect(8,y,Math.Max(1,ActualWidth-16),5),6,6);
+        double y=15;
+        double hover=Math.Max(dragging?.24:0,HoverMotion.Progress(this)*.24);
+        if(hover>0){
+            dc.PushOpacity(hover);
+            dc.DrawRoundedRectangle(Accent,null,new Rect(X(start)-2,y-3,Math.Max(1,X(end)-X(start))+4,11),6,6);
+            dc.Pop();
+        }
+        dc.DrawRoundedRectangle(ThemePalette.Secondary,null,new Rect(8,y,Math.Max(1,ActualWidth-16),5),6,6);
         dc.DrawRoundedRectangle(Accent,null,new Rect(X(start),y,Math.Max(1,X(end)-X(start)),5),6,6);
         foreach(double value in new[]{start,end}){dc.DrawRoundedRectangle(Accent,null,new Rect(X(value)-4,8,8,19),6,6);}
         dc.DrawLine(new Pen(ThemePalette.Foreground,1),new Point(X(position),4),new Point(X(position),30));

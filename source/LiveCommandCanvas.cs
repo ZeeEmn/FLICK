@@ -18,7 +18,7 @@ internal sealed class LiveCommandCanvas : Grid
     private readonly StackPanel lanes=new();
     private readonly Dictionary<string,(ProgressBar Bar,TextBlock Level,AudioGlyphButton Mute)> rows=new();
     private string signature="";
-    internal LiveCommandCanvas(ReplayEngine engine,Action<string,bool>? mute=null,UIElement? qualityControls=null)
+    internal LiveCommandCanvas(ReplayEngine engine,Action<string,bool>? mute=null,UIElement? qualityControls=null,UIElement? displayControl=null)
     {
         this.engine=engine;muteLane=mute??engine.MuteAudioLane;
         System.Windows.Documents.TextElement.SetForeground(this,ThemePalette.Foreground);
@@ -27,7 +27,7 @@ internal sealed class LiveCommandCanvas : Grid
         var row=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center};
         row.Children.Add(new System.Windows.Shapes.Path{Data=Geometry.Parse("M1,2 L27,2 L27,20 L1,20 Z M14,20 L14,26 M7,26 L21,26"),Stroke=ThemePalette.Foreground,StrokeThickness=1.4,Width=31,Height=29,Stretch=Stretch.Uniform,Margin=new Thickness(0,0,14,0)});
         row.Children.Add(status);top.Children.Add(row);
-        top.Children.Add(new TextBlock{Text="Currently Capturing: Full Desktop",FontSize=11,Foreground=ThemePalette.Muted,Margin=new Thickness(45,8,0,12)});
+        if(displayControl is not null)top.Children.Add(displayControl);
         if(qualityControls is not null)top.Children.Add(qualityControls);Children.Add(top);
         var divider=new Border{Height=1,Background=ThemePalette.Divider,Margin=new Thickness(0,8,0,10)};SetRow(divider,1);Children.Add(divider);
         var matrix=new Grid{Margin=new Thickness(0,0,0,10)};matrix.ColumnDefinitions.Add(new(){Width=new GridLength(1.3,GridUnitType.Star)});matrix.ColumnDefinitions.Add(new());

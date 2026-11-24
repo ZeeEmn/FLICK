@@ -24,6 +24,9 @@
       <Setter.Value>
         <ControlTemplate TargetType="Slider">
           <Border Background="{TemplateBinding Background}">
+          <Grid>
+          <Border x:Name="TrackTint" Height="10" CornerRadius="6" Background="{DynamicResource ThemeAccent}"
+                  IsHitTestVisible="False" Opacity="0" />
           <Track x:Name="PART_Track" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{TemplateBinding Value}" VerticalAlignment="Center">
             <Track.DecreaseRepeatButton>
               <RepeatButton Command="Slider.DecreaseLarge">
@@ -53,7 +56,23 @@
               </RepeatButton>
             </Track.IncreaseRepeatButton>
           </Track>
+          </Grid>
           </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard><DoubleAnimation Storyboard.TargetName="TrackTint" Storyboard.TargetProperty="Opacity" To="0.24" Duration="0:0:0.15" /></Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard><DoubleAnimation Storyboard.TargetName="TrackTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" /></Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="TrackTint" Property="Visibility" Value="Collapsed" /></Trigger>
+          </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -90,14 +109,14 @@
             <Trigger Property="IsMouseOver" Value="True">
               <Trigger.EnterActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0.14" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
               </Trigger.EnterActions>
               <Trigger.ExitActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
@@ -151,14 +170,14 @@
             <Trigger Property="IsMouseOver" Value="True">
               <Trigger.EnterActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0.14" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
               </Trigger.EnterActions>
               <Trigger.ExitActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
@@ -191,14 +210,14 @@
             <Trigger Property="IsHighlighted" Value="True">
               <Trigger.EnterActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0.14" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
               </Trigger.EnterActions>
               <Trigger.ExitActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
@@ -233,14 +252,14 @@
             <Trigger Property="IsMouseOver" Value="True">
               <Trigger.EnterActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0.14" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
               </Trigger.EnterActions>
               <Trigger.ExitActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
@@ -285,14 +304,14 @@
             <Trigger Property="IsMouseOver" Value="True">
               <Trigger.EnterActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0.14" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
               </Trigger.EnterActions>
               <Trigger.ExitActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
@@ -361,14 +380,14 @@
             <Trigger Property="IsMouseOver" Value="True">
               <Trigger.EnterActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0.14" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>
               </Trigger.EnterActions>
               <Trigger.ExitActions>
                 <BeginStoryboard>
-                  <Storyboard Timeline.DesiredFrameRate="240">
+                  <Storyboard Timeline.DesiredFrameRate="60">
                     <DoubleAnimation Storyboard.TargetName="HoverTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15" />
                   </Storyboard>
                 </BeginStoryboard>

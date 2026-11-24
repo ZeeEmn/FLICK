@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Primary-display DXGI acquisition only: no WinRT, injection, game process handles, or CPU pixel maps.
+// DXGI desktop acquisition. The capture worker can select a Windows display by GDI device name.
 #define NOMINMAX
 #include <windows.h>
 #include <initguid.h>
@@ -50,11 +50,15 @@ struct Bridge {
     }
     HRESULT duplicate(){
         duplication.Reset();desc_valid=false;
-        HMONITOR primary=MonitorFromPoint(POINT{0,0},MONITOR_DEFAULTTOPRIMARY);
+        WCHAR selected[CCHDEVICENAME]{};
+        DWORD selected_length=GetEnvironmentVariableW(L"FLICK_CAPTURE_DISPLAY",selected,CCHDEVICENAME);
+        if(selected_length>=CCHDEVICENAME)return E_INVALIDARG;
+        HMONITOR primary=selected_length?nullptr:MonitorFromPoint(POINT{0,0},MONITOR_DEFAULTTOPRIMARY);
         for(unsigned i=0;;++i){
             ComPtr<IDXGIOutput> output;HRESULT hr=adapter->EnumOutputs(i,output.GetAddressOf());if(hr==DXGI_ERROR_NOT_FOUND)return DXGI_ERROR_NOT_FOUND;if(FAILED(hr))return hr;
             DXGI_OUTPUT_DESC description{};hr=output->GetDesc(&description);if(FAILED(hr))return hr;
-            if(!description.AttachedToDesktop||description.Monitor!=primary)continue;
+            if(!description.AttachedToDesktop)continue;
+            if(selected_length?lstrcmpiW(description.DeviceName,selected)!=0:description.Monitor!=primary)continue;
             if(description.Rotation!=DXGI_MODE_ROTATION_IDENTITY&&description.Rotation!=DXGI_MODE_ROTATION_UNSPECIFIED)return DXGI_ERROR_UNSUPPORTED;
             ComPtr<IDXGIOutput1> output1;hr=output.As(&output1);if(FAILED(hr))return hr;
             hr=output1->DuplicateOutput(device.Get(),duplication.GetAddressOf());if(FAILED(hr))return hr;

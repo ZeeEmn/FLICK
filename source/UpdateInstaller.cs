@@ -86,7 +86,8 @@ internal static class UpdateInstaller
         using var registry=Registry.CurrentUser.OpenSubKey(@"Software\FLICK\Installer");
         var start=new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,@"WindowsPowerShell\v1.0\powershell.exe"))
         {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Folder};
-        using var script=typeof(UpdateInstaller).Assembly.GetManifestResourceStream("Rewind.ApplyUpdate.ps1")!;
+        using var script=typeof(UpdateInstaller).Assembly.GetManifestResourceStream("Rewind.ApplyUpdate.ps1")
+            ??throw new InvalidOperationException("The update helper is missing from this build.");
         using var reader=new StreamReader(script);
         foreach(string argument in new[]{"-NoProfile","-NonInteractive","-EncodedCommand",Convert.ToBase64String(Encoding.Unicode.GetBytes(reader.ReadToEnd()))})
             start.ArgumentList.Add(argument);
@@ -112,6 +113,7 @@ internal static class UpdateInstaller
             {
                 "0"=>null,
                 "3010"=>"The FLICK update was installed. Restart Windows to finish.",
+                "1602"=>"The update was cancelled. You can retry from Check for updates.",
                 "1618"=>"Another installation was in progress. Close it and try the FLICK update again.",
                 "1638"=>"A different version is already installed. Check which version is running.",
                 _=>"Windows Installer could not finish the update ("+result+"). You can retry from Check for updates."

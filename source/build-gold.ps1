@@ -11,7 +11,7 @@ $compiler=Join-Path $MsysRoot 'ucrt64/bin/g++.exe'
 $common=@('-std=c++17','-O2','-s','-Wall','-Wextra','-D_WIN32_WINNT=0x0A00','-DREWIND_PRODUCTION','-DREWIND_RELEASE_QUIET','-static','-static-libgcc','-static-libstdc++')
 & $compiler @common -shared (Join-Path $root 'desktop-capture/desktop_bridge.cpp') -o (Join-Path $toolDir 'rewind_desktop_bridge.dll') -ld3d11 -ldxgi -ldxguid -luuid -luser32
 if($LASTEXITCODE -ne 0){throw 'Production bridge build failed'}
-& $compiler -std=c++17 -O2 -s -municode -static -static-libgcc -static-libstdc++ (Join-Path $root 'desktop-capture/screenshot.cpp') -o (Join-Path $toolDir 'flick-screenshot.exe') -ld3d11 -ldxgi -ldxguid -luuid -lwindowscodecs -lole32 -luser32
+& $compiler -std=c++17 -O2 -s -municode -static -static-libgcc -static-libstdc++ (Join-Path $root 'desktop-capture/screenshot.cpp') -o (Join-Path $toolDir 'flick-screenshot.exe') -luuid -lwindowscodecs -lole32 -luser32 -lgdi32
 if($LASTEXITCODE -ne 0){throw 'Screenshot helper build failed'}
 $script=(Join-Path $root 'native-capture/configure-gold-worker.sh').Replace('\','/');$script='/'+$script.Substring(0,1).ToLower()+$script.Substring(2)
 $options=@();if($ReuseNativeConfigure){$options+='--reuse-config'}

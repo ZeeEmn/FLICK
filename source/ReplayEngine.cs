@@ -32,6 +32,7 @@ internal sealed class ReplayEngine : IDisposable
     private CancellationTokenSource? fullCheck;
     private CaptureSettings? settings;
     public bool Active { get; private set; }
+    internal string? ActiveDisplayName { get; private set; }
     public event Action<string>? Changed;
     internal event Action? AudioChanged;
     internal bool MicrophoneLive=>audio?.MicrophoneLive==true;
@@ -84,12 +85,12 @@ internal sealed class ReplayEngine : IDisposable
     {
         if(Active || nativeWorker is not null)throw new InvalidOperationException("Replay is already running.");
         RequireVideoTools();
-        if(!string.IsNullOrEmpty(chosen.DisplayId)&&chosen.DisplayId!="primary")throw new InvalidOperationException("Desktop capture supports the primary display only.");
         var memory=MemoryPolicy.Plan(chosen.Seconds,chosen.Profile,MemoryPolicy.Available());
         if(memory.Seconds==0)throw new InvalidOperationException("Not enough available RAM for this replay quality. Close other apps or choose a lower quality profile.");
         chosen=chosen with{Seconds=memory.Seconds};
-        var display=DxgiDisplays.Resolve(null);var plan=QualityProfiles.Plan(chosen.Profile,chosen.FrameRate,display.Width,display.Height);Plan=plan;
-        var encoder=EncoderCatalog.Detect(chosen.Codec);EncoderName=encoder.Name;
+        var display=DxgiDisplays.Resolve(chosen.DisplayId is null or "primary"?null:chosen.DisplayId);
+        var plan=QualityProfiles.Plan(chosen.Profile,chosen.FrameRate,display.Width,display.Height);Plan=plan;
+        var encoder=EncoderCatalog.Detect(chosen.Codec,display);EncoderName=encoder.Name;
         bool wgc=chosen.CaptureApi==WgcCapture.Beta;
         string workerPath=Tool(wgc?WgcCapture.Worker:QualityProfiles.Worker(plan));
         if(wgc)SecurityBootstrap.Verify(Path.Combine(AppContext.BaseDirectory,"tools",WgcCapture.Bridge));
@@ -101,12 +102,14 @@ internal sealed class ReplayEngine : IDisposable
         try{audio.SetEnabled(chosen.Desktop,chosen.Mic,chosen.InputId);audio.SetSources(chosen.AudioSources??Array.Empty<AudioSourceSetting>());}catch(Exception e){Report("Audio unavailable: "+e.Message);}
         buffer.Updated+=()=>{if(videoEpoch<0 && buffer.Statistics.Seconds>0){var snap=buffer.TakeSnapshot(1);videoEpoch=sessionClock.Elapsed.TotalSeconds-snap.Origin-snap.Seconds;firstFragment?.TrySetResult();}};
         var launch=new ProcessStartInfo(workerPath){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};
-        string[] captureArguments=wgc?WgcCapture.Arguments(plan,encoder):DesktopCapture.Arguments(width:plan.SourceWidth,height:plan.SourceHeight,spinUs:0,postFilter:QualityProfiles.Filter(plan,encoder),fps:plan.Fps);
+        launch.Environment[DesktopCapture.DisplayEnvironment]=display.DeviceName;
+        string[] captureArguments=wgc?WgcCapture.Arguments(plan,encoder):DesktopCapture.Arguments(width:plan.SourceWidth,height:plan.SourceHeight,spinUs:0,postFilter:QualityProfiles.Filter(plan,encoder),fps:plan.Fps,adapterIndex:display.AdapterIndex);
         foreach(string arg in captureArguments.Concat(QualityProfiles.EncoderArguments(plan,encoder)))launch.ArgumentList.Add(arg);
         PrivateLog.Write("encoder.log",$"Selected {encoder.Name}; adapter {encoder.Adapter}; CPU fallback {encoder.Cpu}");
         if(encoder.Cpu)Report("Software encoding active; CPU usage may increase.");
         try{
             nativeWorker=Process.Start(launch)??throw new IOException("Could not start desktop capture.");
+            ActiveDisplayName=display.DeviceName;
             var worker=nativeWorker;var ring=buffer;
             nativePump=worker.StandardOutput.BaseStream.CopyToAsync(ring);
             Active=!wgc;
@@ -187,6 +190,7 @@ internal sealed class ReplayEngine : IDisposable
     private async Task<string> SaveCoreAsync(int seconds,Guid requestId)
     {
         if(!await saveGate.WaitAsync(0))throw new InvalidOperationException("A clip is already saving. Try again after it finishes.");
+        var timing=Stopwatch.StartNew();
         string? raw=null,output=null;
         try
         {
@@ -204,24 +208,32 @@ internal sealed class ReplayEngine : IDisposable
             var drive=new DriveInfo(Path.GetPathRoot(saveFolder)!);
             if(drive.AvailableFreeSpace<bytes*2+64*1024*1024)throw new IOException("Insufficient free space for a safe save. Free space and retry.");
             Report("Saving replay in background…");
+            TimeSpan prepared=timing.Elapsed;
             await source.WriteSnapshotAsync(snapshot,raw);
+            TimeSpan recoveryWritten=timing.Elapsed;
             var mux=new List<string>{"-hide_banner","-loglevel","error","-nostdin","-i",raw};
             var audioFiles=new List<AudioReplay.AudioTrackFile>();
             var capturedAudio=audio;
             if(capturedAudio is not null && videoEpoch>=0)audioFiles=capturedAudio.Snapshot(Math.Max(0,videoEpoch+snapshot.Origin),exportSeconds,Path.Combine(DataFolder,id));
+            TimeSpan audioWritten=timing.Elapsed;
             foreach(var track in audioFiles){mux.Add("-i");mux.Add(track.Path);}
             mux.AddRange(new[]{"-map","0:v:0","-c:v","copy"});
             AudioCompatibility.MapSavedAudio(mux,audioFiles);
             mux.AddRange(new[]{"-t",exportSeconds.ToString("0.######",System.Globalization.CultureInfo.InvariantCulture),"-avoid_negative_ts","make_zero","-movflags","+faststart",output});
             try{await RunToolAsync("ffmpeg",mux,TimeSpan.FromSeconds(90));}finally{foreach(var track in audioFiles)File.Delete(track.Path);}
+            TimeSpan muxed=timing.Elapsed;
             string probe=await RunToolAsync("ffprobe",["-v","error","-show_entries","format=duration:stream=codec_type,codec_name","-of","json",output],TimeSpan.FromSeconds(20));
             using var info=JsonDocument.Parse(probe);
             bool video=info.RootElement.GetProperty("streams").EnumerateArray().Any(s=>s.GetProperty("codec_type").GetString()=="video");
             double actual=double.Parse(info.RootElement.GetProperty("format").GetProperty("duration").GetString()!,System.Globalization.CultureInfo.InvariantCulture);
             if(!video || !double.IsFinite(actual) || actual<=0 || actual>Math.Min(snapshot.Seconds,Math.Clamp(seconds,1,300))+.1)throw new InvalidDataException("Saved clip duration/streams failed validation. Recovery file retained.");
+            TimeSpan probed=timing.Elapsed;
             File.Move(output,final);
             await File.WriteAllTextAsync(MetadataPath(final),JsonSerializer.Serialize(new{RequestId=requestId,State="Basic checks passed",FullDecode="Pending",RequestedSeconds=seconds,ActualSeconds=actual,Settings=settings,Created=DateTimeOffset.Now},new JsonSerializerOptions{WriteIndented=true}));
             File.Delete(raw); // Only our temporary source, after the finalized file passed basic checks.
+            TimeSpan finished=timing.Elapsed;
+            PrivateLog.Write("save-timing.log",FormattableString.Invariant(
+                $"clip_s={actual:F2} video_mib={bytes/1048576d:F1} audio_lanes={audioFiles.Count} total_ms={finished.TotalMilliseconds:F0} prepare_ms={prepared.TotalMilliseconds:F0} recovery_ms={(recoveryWritten-prepared).TotalMilliseconds:F0} audio_ms={(audioWritten-recoveryWritten).TotalMilliseconds:F0} mux_ms={(muxed-audioWritten).TotalMilliseconds:F0} probe_ms={(probed-muxed).TotalMilliseconds:F0} finalize_ms={(finished-probed).TotalMilliseconds:F0}"));
             Report($"Saved {actual:F1}s.");
             ScheduleValidation(final);
             return final;

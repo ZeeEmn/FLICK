@@ -193,8 +193,24 @@ struct Bridge : std::enable_shared_from_this<Bridge> {
     }
 };
 struct RwWgcBridge {std::shared_ptr<Bridge> impl;};
+struct MonitorSearch {const WCHAR* name; HMONITOR result;};
+static BOOL CALLBACK find_monitor(HMONITOR handle,HDC,LPRECT,LPARAM parameter) {
+    auto* search=reinterpret_cast<MonitorSearch*>(parameter);
+    MONITORINFOEXW info{};info.cbSize=sizeof(info);
+    if(GetMonitorInfoW(handle,&info)&&lstrcmpiW(info.szDevice,search->name)==0){search->result=handle;return FALSE;}
+    return TRUE;
+}
+static HMONITOR capture_monitor() {
+    WCHAR name[CCHDEVICENAME]{};
+    DWORD length=GetEnvironmentVariableW(L"FLICK_CAPTURE_DISPLAY",name,CCHDEVICENAME);
+    if(!length)return MonitorFromPoint(POINT{0,0},MONITOR_DEFAULTTOPRIMARY);
+    if(length>=CCHDEVICENAME)return nullptr;
+    MonitorSearch search{name,nullptr};
+    EnumDisplayMonitors(nullptr,nullptr,find_monitor,reinterpret_cast<LPARAM>(&search));
+    return search.result;
+}
 static int start_bridge(ID3D11Device* owner,ID3D11Texture2D* const* textures,unsigned width,unsigned height,unsigned fps,HWND hwnd,RwWgcBridge** output,bool discard_only=false,unsigned adapter_index=0,bool primary_monitor=false) {
-    HMONITOR monitor=primary_monitor?MonitorFromPoint(POINT{0,0},MONITOR_DEFAULTTOPRIMARY):nullptr;
+    HMONITOR monitor=primary_monitor?capture_monitor():nullptr;
     if((!discard_only&&(!owner||!textures))||!output||(primary_monitor?!monitor:!IsWindow(hwnd))||!width||!height||fps<1||fps>120)return -1;
     *output=nullptr;
     try {
