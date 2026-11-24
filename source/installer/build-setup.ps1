@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)][string]$PayloadDirectory,
     [Parameter(Mandatory=$true)][string]$OutputFile,
     [string]$Wix='wix',
-    [string]$Compiler='C:/msys64/ucrt64/bin/g++.exe'
+    [string]$Compiler='C:/msys64/ucrt64/bin/g++.exe',
+    [switch]$AllowSameVersionUpgrade
 )
 $ErrorActionPreference='Stop'
 $sourceRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -41,6 +42,8 @@ foreach($file in $files){
 foreach($id in $refs){[void]$xml.AppendLine('<ComponentRef Id="'+$id+'" />')}
 [void]$xml.AppendLine('</ComponentGroup></Fragment></Wix>')
 $harvest=Join-Path $temp 'Payload.wxs';[IO.File]::WriteAllText($harvest,$xml.ToString())
-& $Wix build (Join-Path $PSScriptRoot 'FLICK.wxs') (Join-Path $PSScriptRoot 'Wizard.wxs') $harvest -arch x64 -ext WixToolset.UI.wixext/6.0.2 -d "SourceRoot=$sourceRoot" -d "GuardDll=$guard" -pdbtype none -intermediatefolder $temp -out $output
+$upgradeOptions=@()
+if($AllowSameVersionUpgrade){$upgradeOptions+=@('-d','AllowSameVersionUpgrades=yes')}
+& $Wix build (Join-Path $PSScriptRoot 'FLICK.wxs') (Join-Path $PSScriptRoot 'Wizard.wxs') $harvest -arch x64 -ext WixToolset.UI.wixext/6.0.2 -d "SourceRoot=$sourceRoot" -d "GuardDll=$guard" -pdbtype none -intermediatefolder $temp @upgradeOptions -out $output
 if($LASTEXITCODE -ne 0){throw 'MSI build failed'}
 Write-Output "Setup wizard ready: $output"

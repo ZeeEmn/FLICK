@@ -72,20 +72,46 @@ internal sealed class AudioSourceSelector : Window
     {
         selected.TryGetValue(device.Id,out var saved);
         string label=(device.IsInput?"Input · ":"Output · ")+device.Title;
-        var group=new StackPanel{Margin=new Thickness(0,0,0,8)};
+        var group=new StackPanel{Margin=new Thickness(0,7,0,0)};
         rows.Children.Add(group);
-        var row=new DockPanel();
+        var row=new DockPanel{MinHeight=36};
         group.Children.Add(row);
-        var check=new CheckBox{Content=label,IsChecked=saved is not null,VerticalAlignment=VerticalAlignment.Center,ToolTip=label};
-        var choice=new Expander
+        var check=new CheckBox{IsChecked=saved is not null,VerticalAlignment=VerticalAlignment.Center,ToolTip=label,Margin=new Thickness(12,0,6,0)};
+        AutomationProperties.SetName(check,label);
+        DockPanel.SetDock(check,Dock.Right);row.Children.Add(check);
+
+        bool canChoose=device.IsInput&&device.Channels>1;
+        bool expanded=canChoose&&saved?.Channels is {Length:>0};
+        var choice=new Button
         {
-            Header="Choose channels",Visibility=device.IsInput&&device.Channels>1?Visibility.Visible:Visibility.Collapsed,
-            Margin=new Thickness(23,5,0,3),IsExpanded=saved?.Channels is {Length:>0}
+            Visibility=canChoose?Visibility.Visible:Visibility.Collapsed,
+            Foreground=ThemePalette.Foreground,Background=ThemePalette.Surface,
+            FontSize=11,Margin=new Thickness(8,0,0,0),Padding=new Thickness(8,4,8,4),
+            MinWidth=126,VerticalAlignment=VerticalAlignment.Center
         };
-        row.Children.Add(check);
-        group.Children.Add(choice);
-        var channelRows=new StackPanel{Margin=new Thickness(16,5,5,3)};
-        choice.Content=channelRows;
+        AutomationProperties.SetName(choice,"Choose channels for "+device.Title);
+        DockPanel.SetDock(choice,Dock.Right);row.Children.Add(choice);
+        row.Children.Add(new TextBlock
+        {
+            Text=label,Foreground=ThemePalette.Foreground,TextWrapping=TextWrapping.Wrap,
+            VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(6,0,0,0)
+        });
+        var channelRows=new StackPanel();
+        var channelPanel=new Border
+        {
+            Child=channelRows,Background=ThemePalette.Secondary,CornerRadius=new CornerRadius(6),
+            Margin=new Thickness(6,5,6,2),Padding=new Thickness(12,9,10,9)
+        };
+        group.Children.Add(channelPanel);
+        group.Children.Add(new Border{Height=1,Background=ThemePalette.Divider,Margin=new Thickness(6,7,6,0)});
+        void SetExpanded(bool value)
+        {
+            expanded=value;
+            choice.Content=expanded?"Hide channels ▴":"Choose channels ▾";
+            channelPanel.Visibility=expanded?Visibility.Visible:Visibility.Collapsed;
+        }
+        SetExpanded(expanded);
+        choice.Click+=(_,_)=>SetExpanded(!expanded);
         var parts=new List<(int Index,CheckBox Pick,TextBox Name)>();
 
         void Change(bool enabled)
@@ -98,7 +124,7 @@ internal sealed class AudioSourceSelector : Window
             status.Text="";
         }
 
-        if(choice.Visibility==Visibility.Visible)
+        if(canChoose)
         {
             var note=new TextBlock{Text="Selected channels become separate tracks. A split device replaces its regular microphone lane.",Foreground=ThemePalette.Muted,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,5)};
             channelRows.Children.Add(note);
@@ -107,9 +133,20 @@ internal sealed class AudioSourceSelector : Window
                 string input=$"Input {index+1}";
                 var prior=saved?.Channels?.FirstOrDefault(c=>c.Index==index);
                 var item=new DockPanel{Margin=new Thickness(0,3,0,3)};
-                var pick=new CheckBox{Content=input,IsChecked=prior is not null,Width=108,VerticalAlignment=VerticalAlignment.Center};
-                DockPanel.SetDock(pick,Dock.Left);item.Children.Add(pick);
-                var name=new TextBox{Text=prior?.Name??"",MaxLength=160,ToolTip="Optional track name",IsEnabled=prior is not null,MaxWidth=240,HorizontalAlignment=HorizontalAlignment.Left,MinWidth=160};
+                var pick=new CheckBox{IsChecked=prior is not null,VerticalAlignment=VerticalAlignment.Center};
+                AutomationProperties.SetName(pick,device.Title+" "+input);
+                DockPanel.SetDock(pick,Dock.Right);item.Children.Add(pick);
+                var caption=new TextBlock
+                {
+                    Text=input,Foreground=ThemePalette.Foreground,Width=65,VerticalAlignment=VerticalAlignment.Center,
+                    Margin=new Thickness(0,0,8,0)
+                };
+                DockPanel.SetDock(caption,Dock.Left);item.Children.Add(caption);
+                var name=new TextBox
+                {
+                    Text=prior?.Name??"",MaxLength=160,ToolTip="Optional track name",IsEnabled=prior is not null,
+                    Margin=new Thickness(0,0,12,0),MinHeight=29
+                };
                 AutomationProperties.SetName(name,input+" track name");
                 item.Children.Add(name);channelRows.Children.Add(item);
                 parts.Add((index,pick,name));

@@ -1,7 +1,10 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef AllowSameVersionUpgrades ?>
+    <?define AllowSameVersionUpgrades = "no" ?>
+  <?endif ?>
   <Package Name="FLICK" Manufacturer="FLICK" Version="1.3.1" Language="1033"
            UpgradeCode="A9175990-3D86-4E4B-A6ED-C4F73E916453" Scope="perUser" InstallerVersion="500" Compressed="yes">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of FLICK is already installed." Schedule="afterInstallInitialize" />
+    <MajorUpgrade AllowSameVersionUpgrades="$(var.AllowSameVersionUpgrades)" DowngradeErrorMessage="A newer version of FLICK is already installed." Schedule="afterInstallInitialize" />
     <!-- Migrate the unpublished preview installer without treating its version as a public release. -->
     <Upgrade Id="13D27174-5383-43C1-AB29-00F1F52C36E3"><UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" Property="FLICK_PREVIEW_FOUND" /></Upgrade>
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
