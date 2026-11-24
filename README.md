@@ -1,10 +1,10 @@
-# FLICK V1.3
+# FLICK V1.3.1
 
 **Save the moment. Keep playing.**
 
-### [Download FLICK for Windows (.msi)](https://github.com/ZeeEmn/FLICK/releases/download/v1.3.0/FLICK-V1.3-Setup.msi)
+### [Download FLICK for Windows (.msi)](https://github.com/ZeeEmn/FLICK/releases/download/v1.3.1/FLICK-V1.3.1-Setup.msi)
 
-[Portable ZIP](https://github.com/ZeeEmn/FLICK/releases/download/v1.3.0/FLICK-V1.3-Portable.zip) | [All release files](https://github.com/ZeeEmn/FLICK/releases/latest)
+[Portable ZIP](https://github.com/ZeeEmn/FLICK/releases/download/v1.3.1/FLICK-V1.3.1-Portable.zip) | [All release files](https://github.com/ZeeEmn/FLICK/releases/latest)
 
 FLICK is a free, open-source instant-replay recorder for Windows. It runs in the
 background, ready to save recent gameplay with a shortcut. Record locally, capture
@@ -46,9 +46,9 @@ Get the latest version from [GitHub Releases](https://github.com/ZeeEmn/FLICK/re
 
 | Download | How to use it |
 | --- | --- |
-| **FLICK-V1.3-Setup.msi** | Run the setup wizard. The required runtime is included. |
-| **FLICK-V1.3-Portable.zip** | Extract the entire folder and open FLICK.exe. Keep the included files together. |
-| **FLICK-V1.3-Source.zip** | Application source, dependency sources, and build instructions. |
+| **FLICK-V1.3.1-Setup.msi** | Run the setup wizard. The required runtime is included. |
+| **FLICK-V1.3.1-Portable.zip** | Extract the entire folder and open FLICK.exe. Keep the included files together. |
+| **FLICK-V1.3.1-Source.zip** | Application source, dependency sources, and build instructions. |
 
 The installer is unsigned, so Windows may display an unknown-publisher warning.
 For manual installs, exit any existing FLICK tray instance before running setup. From V1.2 onward, **Check for updates** can download and verify an available installer inside FLICK.
@@ -97,7 +97,7 @@ Available replay history depends on memory and profile settings.
 Clips include a default stereo mix so ordinary video players can play desktop
 audio and microphone together. Separate original tracks remain available in FLICK
 for editing. Existing clips keep their original audio layout until edited. Use the mixer to select
-additional audio device endpoints or click a speaker icon to mute a lane. Apps
+additional audio devices or click a speaker icon to mute a lane. Pause replay to change audio devices. In **Settings → Audio lanes**, **Choose channels** lets you record individual channels from a compatible Windows input as separate tracks. Apps
 sharing one Windows output device share an audio lane.
 
 Click a clip thumbnail to watch it. Use the timeline to split, remove, restore,
