@@ -9,7 +9,7 @@ internal sealed class CaptureSettingsHover : Grid
     private readonly Border notice;
     private bool locked;
 
-    internal CaptureSettingsHover(UIElement controls)
+    internal CaptureSettingsHover(UIElement controls,string message="Pause replay to change capture settings")
     {
         Background=Brushes.Transparent;
         Children.Add(controls);
@@ -22,7 +22,7 @@ internal sealed class CaptureSettingsHover : Grid
             Visibility=Visibility.Collapsed,
             Child=new TextBlock
             {
-                Text="Pause replay to change capture settings",
+                Text=message,
                 Foreground=ThemePalette.Foreground,
                 FontWeight=FontWeights.SemiBold,
                 TextWrapping=TextWrapping.Wrap,

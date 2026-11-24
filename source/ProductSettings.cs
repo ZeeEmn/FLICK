@@ -34,7 +34,7 @@ internal sealed class ProductSettings
         if(HudPosition is not ("Top-Right" or "Top-Left" or "Bottom-Right" or "Bottom-Left"))HudPosition="Top-Right";
         if(ThemeVariant is not ("System Default" or "Pure Dark Onyx" or "Light Mode"))ThemeVariant="System Default";
         if(!ThemePalette.ValidHex(AccentHex))AccentHex=ThemePalette.DefaultAccent;
-        AudioSources=(AudioSources??new()).Where(a=>!string.IsNullOrWhiteSpace(a.Id)&&a.Id.Length<=2048).DistinctBy(a=>a.Id).Take(6).ToList();
+        AudioSources=AudioSourceSetting.Normalize(AudioSources);
         try{if(StoragePath is not null)StoragePath=LocalPaths.Require(StoragePath);}catch{StoragePath=null;}
         Codec="h264"; // Video encoding is automatic; migrate old manual HEVC preferences.
         Seconds=Math.Clamp(Seconds,1,300);
@@ -62,7 +62,37 @@ internal sealed class ProductSettings
         if(key.GetValue("REWIND") is string legacy&&legacy.StartsWith('"')){int end=legacy.IndexOf('"',1);if(end>1){string? directory=Path.GetDirectoryName(legacy[1..end]);if(directory is not null&&File.Exists(Path.Combine(directory,"REWIND.dll"))&&File.Exists(Path.Combine(directory,"NAudio.Wasapi.dll")))key.DeleteValue("REWIND",false);}}
     }
 }
-internal sealed record AudioSourceSetting(string Id,string Title,bool IsInput);
+internal sealed record AudioChannelSetting(int Index,string? Name);
+internal sealed record AudioSourceSetting(string Id,string Title,bool IsInput,AudioChannelSetting[]? Channels=null)
+{
+    internal const int MaximumLanes=6;
+    internal const int MaximumChannels=32;
+    internal int LaneCount=>Channels?.Length??1;
+
+    internal static List<AudioSourceSetting> Normalize(IEnumerable<AudioSourceSetting>? settings)
+    {
+        var result=new List<AudioSourceSetting>();
+        int remaining=MaximumLanes;
+        foreach(var source in (settings??[]).Where(s=>s is not null&&s.Id is {Length:>0 and <=2048}&&!string.IsNullOrWhiteSpace(s.Id)).DistinctBy(s=>s.Id,StringComparer.OrdinalIgnoreCase))
+        {
+            if(remaining==0)break;
+            var channels=source.IsInput?source.Channels?.Where(c=>c is not null&&c.Index is >=0 and <MaximumChannels)
+                .DistinctBy(c=>c.Index).Take(remaining).Select(c=>c with{Name=CleanName(c.Name)}).ToArray():null;
+            if(channels is {Length:0})continue;
+            var value=source with{Title=CleanName(source.Title)??"Audio",Channels=channels};
+            result.Add(value);
+            remaining-=value.LaneCount;
+        }
+        return result;
+    }
+
+    private static string? CleanName(string? value)
+    {
+        string? name=value?.Trim();
+        if(string.IsNullOrWhiteSpace(name)||name.Equals(AudioCompatibility.MixTitle,StringComparison.OrdinalIgnoreCase))return null;
+        return name.Length<=160?name:name[..160];
+    }
+}
 internal static class Shortcut
 {
     internal static (uint Modifiers,uint Key) Parse(string text){

@@ -27,57 +27,221 @@ internal sealed class AudioReplay : IDisposable
         internal volatile bool Enabled;
         internal double LastEnd;
         internal Packet? Latest;
-        internal bool Input,Muted,Available;
+        internal bool Input;
+        internal volatile bool Muted,Available;
+        internal (int Index,Track Lane)[] Channels=[];
         internal AudioEndpointVolumeNotificationDelegate? VolumeNotice;
         internal string Title="Audio";
         public void Dispose(){Enabled=false;Available=false;if(Device is not null&&VolumeNotice is not null)Device.AudioEndpointVolume.OnVolumeNotification-=VolumeNotice;Capture?.StopRecording();Capture?.Dispose();Device?.Dispose();Capture=null;Device=null;}
     }
-    private readonly Track desktop=new(),mic=new();
+    private readonly Track desktop=new(){Title="Desktop Audio"},mic=new(){Title="Microphone",Input=true};
     private readonly object matrixGate=new();
-    private readonly Dictionary<string,Track> extra=new();
+    private readonly Dictionary<string,Track> extra=new(StringComparer.OrdinalIgnoreCase);
+    private bool microphoneIsSplit;
     internal event Action? StateChanged;
-    internal bool MicrophoneLive{get{lock(matrixGate)return new[]{mic}.Concat(extra.Values).Any(t=>t.Input&&t.Enabled&&t.Available&&!t.Muted);}}
+    internal bool MicrophoneLive{get{lock(matrixGate)return Lanes().Any(l=>l.Device.Input&&l.Lane.Enabled&&l.Device.Available&&!l.Device.Muted);}}
     private readonly Stopwatch clock;
     private int history;
     internal AudioReplay(Stopwatch clock,int seconds){this.clock=clock;history=seconds;}
     internal void SetHistory(int seconds)=>history=Math.Clamp(seconds,1,300);
     internal static string[] Microphones(){using var devices=new MMDeviceEnumerator();var result=new List<string>();foreach(var device in devices.EnumerateAudioEndPoints(DataFlow.Capture,DeviceState.Active))using(device)result.Add(device.ID+"|"+device.FriendlyName);return result.ToArray();}
+    internal void Configure(bool output,bool input,string? inputId,IReadOnlyList<AudioSourceSetting> sources)
+    {
+        var selected=AudioSourceSetting.Normalize(sources);
+        string? microphoneId=inputId;
+        if(microphoneId is null&&selected.Any(s=>s.Channels is not null))
+        {
+            try
+            {
+                using var enumerator=new MMDeviceEnumerator();
+                using var device=enumerator.GetDefaultAudioEndpoint(DataFlow.Capture,Role.Communications);
+                microphoneId=device.ID;
+            }
+            catch(System.Runtime.InteropServices.COMException){}
+        }
+
+        Exception? defaultFailure=null;
+        lock(matrixGate)
+        {
+            microphoneIsSplit=selected.Any(s=>s.Channels is not null&&string.Equals(s.Id,microphoneId,StringComparison.OrdinalIgnoreCase));
+            try{SetTrack(desktop,output,false,null);}
+            catch(Exception e){defaultFailure=e;}
+            try{SetTrack(mic,input&&!microphoneIsSplit,true,inputId);}
+            catch(Exception e){defaultFailure??=e;}
+            foreach(var source in selected)
+            {
+                if(string.Equals(source.Id,desktop.Device?.ID,StringComparison.OrdinalIgnoreCase)||
+                    string.Equals(source.Id,mic.Device?.ID,StringComparison.OrdinalIgnoreCase))continue;
+                var track=new Track{Title=source.Title,Input=source.IsInput,Enabled=true,
+                    Channels=source.Channels?.Select(c=>(c.Index,new Track{Title=c.Name??$"Input {c.Index+1}",Enabled=true})).ToArray()??[]};
+                try{SetTrack(track,true,source.IsInput,source.Id);}
+                catch(Exception e){PrivateLog.Write("audio.log",e.Message);}
+                extra.Add(source.Id,track);
+            }
+        }
+        StateChanged?.Invoke();
+        if(defaultFailure is not null)throw new IOException(defaultFailure.Message,defaultFailure);
+    }
+
     internal void SetEnabled(bool output,bool input,string? inputId)
     {
-        SetTrack(desktop,output,false,null);SetTrack(mic,input,true,inputId);StateChanged?.Invoke();
+        lock(matrixGate)
+        {
+            SetTrack(desktop,output,false,null);
+            SetTrack(mic,input&&!microphoneIsSplit,true,inputId);
+        }
+        StateChanged?.Invoke();
     }
+
     private void SetTrack(Track track,bool enabled,bool input,string? id)
     {
-        track.Enabled=enabled;track.Input=input;if(!enabled||track.Capture is not null)return;
-        using var devices=new MMDeviceEnumerator();
-        track.Device=input?(string.IsNullOrEmpty(id)?devices.GetDefaultAudioEndpoint(DataFlow.Capture,Role.Communications):devices.GetDevice(id)):(id is not null?devices.GetDevice(id):devices.GetDefaultAudioEndpoint(DataFlow.Render,Role.Multimedia));
-        track.Title=input?"Microphone":"Desktop Audio";track.Muted=track.Device.AudioEndpointVolume.Mute;track.VolumeNotice=value=>{track.Muted=value.Muted;StateChanged?.Invoke();};track.Device.AudioEndpointVolume.OnVolumeNotification+=track.VolumeNotice;
-        track.Capture=input?new WasapiCapture(track.Device):new MixerHiddenLoopbackCapture(track.Device);
-        track.Format=new WaveFormat(48000,16,input?1:2);track.Capture.WaveFormat=track.Format;
-        track.Capture.DataAvailable+=(_,e)=>{
-            int count=e.BytesRecorded;if(count<=0)return;byte[] data=new byte[count];if(track.Enabled&&!track.Muted)Buffer.BlockCopy(e.Buffer,0,data,0,count);
-            double duration=count/(double)track.Format.AverageBytesPerSecond;
-            lock(track.Gate){
-                double proposed=clock.Elapsed.TotalSeconds-duration;
-                double start=Math.Abs(proposed-track.LastEnd)<0.15?track.LastEnd:Math.Max(track.LastEnd,proposed);
-                var packet=new Packet(start,data);track.Packets.Enqueue(packet);track.Latest=packet;track.LastEnd=start+duration;
-                while(track.Packets.Count>0 && track.Packets.Peek().Start<clock.Elapsed.TotalSeconds-history-20)track.Packets.Dequeue();
+        track.Enabled=enabled;track.Input=input;
+        if(!enabled||track.Capture is not null)return;
+        try
+        {
+            using var devices=new MMDeviceEnumerator();
+            track.Device=id is not null?devices.GetDevice(id):input
+                ?devices.GetDefaultAudioEndpoint(DataFlow.Capture,Role.Communications)
+                :devices.GetDefaultAudioEndpoint(DataFlow.Render,Role.Multimedia);
+            track.Muted=track.Device.AudioEndpointVolume.Mute;
+            track.VolumeNotice=value=>{track.Muted=value.Muted;StateChanged?.Invoke();};
+            track.Device.AudioEndpointVolume.OnVolumeNotification+=track.VolumeNotice;
+            var capture=input?new WasapiCapture(track.Device):new MixerHiddenLoopbackCapture(track.Device);
+            track.Capture=capture;
+            if(track.Channels.Length==0)
+            {
+                track.Format=new WaveFormat(48000,16,input?1:2);
+                capture.WaveFormat=track.Format;
+                capture.DataAvailable+=(_,e)=>{
+                    if(e.BytesRecorded<=0)return;
+                    var data=new byte[e.BytesRecorded];
+                    if(track.Enabled&&!track.Muted)Buffer.BlockCopy(e.Buffer,0,data,0,data.Length);
+                    StorePacket(track,data,clock.Elapsed.TotalSeconds);
+                };
             }
-        };
-        track.Capture.RecordingStopped+=(_,_)=>{track.Available=false;StateChanged?.Invoke();};
-        try{track.Capture.StartRecording();track.Available=true;}catch{track.Dispose();throw;}
+            else
+            {
+                using var client=track.Device.AudioClient;
+                var format=client.MixFormat;
+                if(track.Channels.Any(c=>c.Index>=format.Channels))
+                    throw new IOException("A selected input channel is no longer available.");
+                var splitter=new AudioInputChannels(format);
+                capture.WaveFormat=format;
+                foreach(var (_,lane) in track.Channels)lane.Format=splitter.MonoFormat;
+                capture.DataAvailable+=(_,e)=>StoreChannels(track,splitter,e.Buffer,e.BytesRecorded);
+            }
+            capture.RecordingStopped+=(_,_)=>{track.Available=false;StateChanged?.Invoke();};
+            track.Available=true;
+            capture.StartRecording();
+        }
+        catch
+        {
+            track.Dispose();
+            throw;
+        }
     }
-    internal sealed record Endpoint(string Id,string Title,bool IsInput);
-    internal static Endpoint[] Endpoints(){using var devices=new MMDeviceEnumerator();var items=new List<Endpoint>();foreach(var flow in new[]{DataFlow.Render,DataFlow.Capture})foreach(var device in devices.EnumerateAudioEndPoints(flow,DeviceState.Active))using(device)items.Add(new(device.ID,device.FriendlyName,flow==DataFlow.Capture));return items.ToArray();}
-    internal void SetSources(IReadOnlyList<AudioSourceSetting> sources){lock(matrixGate){var wanted=sources.DistinctBy(s=>s.Id).Take(6).Where(s=>s.Id!=desktop.Device?.ID&&s.Id!=mic.Device?.ID).ToArray();foreach(string id in extra.Keys.Where(id=>!wanted.Any(s=>s.Id==id)).ToArray()){extra[id].Dispose();extra.Remove(id);}foreach(var source in wanted){if(extra.ContainsKey(source.Id))continue;var track=new Track();try{SetTrack(track,true,source.IsInput,source.Id);track.Title=source.Title.Length>160?source.Title[..160]:source.Title;extra.Add(source.Id,track);}catch(Exception e){track.Dispose();PrivateLog.Write("audio.log",source.Title+": "+e.Message);}}}StateChanged?.Invoke();}
+
+    private void StoreChannels(Track track,AudioInputChannels splitter,byte[] buffer,int bytes)
+    {
+        int frames=splitter.FrameCount(bytes);
+        if(frames==0)return;
+        double end=clock.Elapsed.TotalSeconds;
+        bool muted=track.Muted;
+        foreach(var (index,lane) in track.Channels)
+        {
+            var data=new byte[frames*splitter.MonoFormat.BlockAlign];
+            if(lane.Enabled&&!muted)splitter.CopyChannel(buffer.AsSpan(0,bytes),index,data);
+            StorePacket(lane,data,end);
+        }
+    }
+
+    private void StorePacket(Track track,byte[] data,double end)
+    {
+        double duration=data.Length/(double)track.Format.AverageBytesPerSecond;
+        lock(track.Gate)
+        {
+            double proposed=end-duration;
+            double start=Math.Abs(proposed-track.LastEnd)<.15?track.LastEnd:Math.Max(track.LastEnd,proposed);
+            var packet=new Packet(start,data);
+            track.Packets.Enqueue(packet);
+            track.Latest=packet;
+            track.LastEnd=start+duration;
+            while(track.Packets.Count>0&&track.Packets.Peek().Start<end-history-20)track.Packets.Dequeue();
+        }
+    }
+
+    internal sealed record Endpoint(string Id,string Title,bool IsInput,int Channels);
+    internal static Endpoint[] Endpoints()
+    {
+        using var devices=new MMDeviceEnumerator();
+        var items=new List<Endpoint>();
+        foreach(var flow in new[]{DataFlow.Render,DataFlow.Capture})
+        foreach(var device in devices.EnumerateAudioEndPoints(flow,DeviceState.Active))
+        using(device)
+        {
+            bool input=flow==DataFlow.Capture;
+            int channels=1;
+            if(input)
+            {
+                try
+                {
+                    using var client=device.AudioClient;
+                    var format=client.MixFormat;
+                    _=new AudioInputChannels(format);
+                    channels=Math.Min(format.Channels,AudioSourceSetting.MaximumChannels);
+                }
+                catch(Exception e) when(e is NotSupportedException or System.Runtime.InteropServices.COMException){}
+            }
+            items.Add(new(device.ID,device.FriendlyName,input,channels));
+        }
+        return items.ToArray();
+    }
+
+    // Call under matrixGate. A split endpoint owns one device and several independent lanes.
+    private IEnumerable<(string Id,Track Lane,Track Device)> Lanes()
+    {
+        yield return ("desktop",desktop,desktop);
+        if(!microphoneIsSplit)yield return ("mic",mic,mic);
+        foreach(var (id,device) in extra)
+        {
+            if(device.Channels.Length==0){yield return (id,device,device);continue;}
+            foreach(var (index,lane) in device.Channels)yield return (id+"#"+index,lane,device);
+        }
+    }
+
     internal sealed record Meter(string Id,string Title,double Peak,bool Enabled,bool Muted,bool Available);
-    internal Meter[] Meters(){(string Id,Track Track,string Title)[] tracks;lock(matrixGate)tracks=new[]{("desktop",desktop,"Desktop Audio"),("mic",mic,"Microphone")}.Concat(extra.Select(p=>(p.Key,p.Value,p.Value.Title))).ToArray();return tracks.Select(item=>{var t=item.Track;Packet? packet;lock(t.Gate)packet=t.Latest;double peak=0;if(t.Enabled&&!t.Muted&&packet is not null&&clock.Elapsed.TotalSeconds-t.LastEnd<.5){byte[] data=packet.Bytes;for(int i=0;i+1<data.Length;i+=32)peak=Math.Max(peak,Math.Abs((int)(short)(data[i]|data[i+1]<<8))/32768d);}return new Meter(item.Id,item.Title,peak,t.Enabled,t.Muted,t.Available);}).ToArray();}
-    internal void MuteLane(string id,bool muted){lock(matrixGate){Track? track=id=="desktop"?desktop:id=="mic"?mic:extra.GetValueOrDefault(id);if(track is not null)track.Enabled=!muted;}StateChanged?.Invoke();}
+    internal Meter[] Meters()
+    {
+        (string Id,Track Lane,Track Device)[] tracks;
+        lock(matrixGate)tracks=Lanes().ToArray();
+        return tracks.Select(item=>{
+            var (id,lane,device)=item;
+            Packet? packet;double lastEnd;
+            lock(lane.Gate){packet=lane.Latest;lastEnd=lane.LastEnd;}
+            double peak=0;
+            if(lane.Enabled&&!device.Muted&&device.Available&&packet is not null&&clock.Elapsed.TotalSeconds-lastEnd<.5)
+            {
+                byte[] data=packet.Bytes;
+                for(int i=0;i+1<data.Length;i+=32)peak=Math.Max(peak,Math.Abs((int)(short)(data[i]|data[i+1]<<8))/32768d);
+            }
+            return new Meter(id,lane.Title,peak,lane.Enabled,device.Muted,device.Available);
+        }).ToArray();
+    }
+
+    internal void MuteLane(string id,bool muted)
+    {
+        lock(matrixGate)
+        {
+            var track=Lanes().FirstOrDefault(l=>l.Id==id).Lane;
+            if(track is not null)track.Enabled=!muted;
+        }
+        StateChanged?.Invoke();
+    }
     internal sealed record AudioTrackFile(string Path,string Title);
     internal List<AudioTrackFile> Snapshot(double start,double seconds,string prefix)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(prefix)!);var files=new List<AudioTrackFile>();int index=0;
-        (Track,string)[] tracks;lock(matrixGate)tracks=new[]{(desktop,"Desktop Audio"),(mic,"Microphone")}.Concat(extra.Values.Select(t=>(t,t.Title))).ToArray();
+        (Track,string)[] tracks;lock(matrixGate)tracks=Lanes().Select(t=>(t.Lane,t.Lane.Title)).ToArray();
         foreach(var (track,title) in tracks){
             Packet[] packets;lock(track.Gate)packets=track.Packets.ToArray();if(packets.Length==0)continue;
             string file=prefix+"-audio"+(index++)+".wav";

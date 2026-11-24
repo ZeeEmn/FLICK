@@ -151,7 +151,7 @@ internal sealed class Shell : Window
             }
             lastStartError="";captureNotice="Waiting for display…";
         }catch(Exception e){retryAfter=DateTime.UtcNow.AddSeconds(e is FileNotFoundException?10:2);captureNotice=e is FileNotFoundException?"Installation incomplete — extract the entire release ZIP.":"Display unavailable — retrying automatically…";if(lastStartError!=e.Message){lastStartError=e.Message;Log(e.ToString());NotificationRequested?.Invoke(e.Message);}}
-        finally{changing=false;if(IsVisible||home?.IsVisible==true)UpdateStates();if(restartPending&&!restartLoop&&!quitting&&!inspection)_=RestartAsync();}
+        finally{changing=false;if(IsVisible||home?.IsVisible==true)UpdateStates();}
     }
     private async Task<bool> StartCaptureAsync(CaptureSettings settings)
     {
@@ -288,7 +288,15 @@ internal sealed class Shell : Window
         };
         stateUpdates[dashboard?"home-duration":"overlay-duration"]=UpdateLength;UpdateLength();
         audioGroup.Children.Add(Text("AUDIO SOURCES",11));audioGroup.Children.Add(AudioToggle("Desktop audio",true,dashboard));audioGroup.Children.Add(AudioToggle("Microphone",false,dashboard));
-        audioGroup.Children.Add(Text("Input device",11));var input=new MicrophonePicker(()=>preferences.InputId,async id=>{preferences.InputId=id;SavePreferences();await RestartAsync();},!inspection);audioGroup.Children.Add(input);
+        audioGroup.Children.Add(Text("Input device",11));
+        var input=new MicrophonePicker(()=>preferences.InputId,id=>{
+            if(CanChangeCaptureSettings){preferences.InputId=id;SavePreferences();}
+            return Task.CompletedTask;
+        },!inspection);
+        var inputLock=new CaptureSettingsHover(input,"Pause replay to change audio devices");
+        void RefreshInput(){input.IsEnabled=CanChangeCaptureSettings;inputLock.SetLocked(!input.IsEnabled);}
+        stateUpdates[dashboard?"home-audio-input":"overlay-audio-input"]=RefreshInput;
+        RefreshInput();audioGroup.Children.Add(inputLock);
         if(dashboard)Grid.SetColumn(controls,1);columns.Children.Add(controls);
         if(dashboard){
             var summary=new Grid{Margin=new Thickness(0,4,20,0)};summary.RowDefinitions.Add(new());summary.RowDefinitions.Add(new(){Height=GridLength.Auto});summary.RowDefinitions.Add(new(){Height=GridLength.Auto});
@@ -520,9 +528,27 @@ internal sealed class Shell : Window
         stateUpdates[dashboard?"home-auto-resume":"overlay-auto-resume"]=()=>autoResume.IsChecked=preferences.AutoResumeReplay;
         AddCaptureBackendSetting(Section("Capture"),dashboard);
         var audioSection=Section("Audio");
-        var audio=Button("Audio lanes · "+preferences.AudioSources.Count+" additional",()=>{var selector=new AudioSourceSelector(preferences.AudioSources,async selected=>{await Task.Run(()=>engine.SetAudioSources(selected));preferences.AudioSources=selected.ToList();SavePreferences();ViewSettingsChanged?.Invoke();},!inspection){Owner=Window.GetWindow(root)};selector.ShowDialog();});
+        var audio=Button("Audio lanes",()=>{
+            if(!CanChangeCaptureSettings)return;
+            var selector=new AudioSourceSelector(preferences.AudioSources,selected=>{
+                if(!CanChangeCaptureSettings)throw new InvalidOperationException("Pause replay to change audio devices.");
+                preferences.AudioSources=selected.ToList();
+                SavePreferences();UpdateStates();
+            },!inspection){Owner=Window.GetWindow(root)};
+            autoResumeTimer.Stop();
+            try{selector.ShowDialog();}
+            finally{UpdateAutoResumeTimer();}
+        });
         audio.HorizontalAlignment=HorizontalAlignment.Left;
-        audioSection.Children.Add(audio);
+        var audioLock=new CaptureSettingsHover(audio,"Pause replay to change audio devices"){HorizontalAlignment=HorizontalAlignment.Left,MinWidth=230};
+        void RefreshAudio()
+        {
+            audio.Content="Audio lanes · "+preferences.AudioSources.Sum(s=>s.LaneCount)+" additional";
+            audio.IsEnabled=CanChangeCaptureSettings;
+            audioLock.SetLocked(!audio.IsEnabled);
+        }
+        stateUpdates[dashboard?"home-audio-lanes":"overlay-audio-lanes"]=RefreshAudio;
+        RefreshAudio();audioSection.Children.Add(audioLock);
         var storageSection=Section("Storage");
         storageSection.Children.Add(Text("Storage Location",11));var storage=new DockPanel{Margin=new Thickness(0,2,0,16)};var path=Text(StorageLocations.Current,11);path.TextWrapping=TextWrapping.NoWrap;path.TextTrimming=TextTrimming.CharacterEllipsis;path.ToolTip=StorageLocations.Current;path.VerticalAlignment=VerticalAlignment.Center;var browse=Button("Browse",()=>{});DockPanel.SetDock(browse,Dock.Right);storage.Children.Add(browse);storage.Children.Add(new Border{Padding=new Thickness(8),Background=ThemePalette.Secondary,CornerRadius=new CornerRadius(6),Child=path});storageSection.Children.Add(storage);
         var meter=new ClipStorageMeter(engine);storageSection.Children.Add(meter);
@@ -699,7 +725,7 @@ internal sealed class Shell : Window
 
     private async Task InstallUpdateAsync(string path,UpdateAsset installer)
     {
-        if(changing||restartLoop||quitting||clipViewer is not null)
+        if(changing||quitting||clipViewer is not null)
             throw new InvalidOperationException("Finish any capture changes and close the clip viewer before installing.");
         UpdateInstalling=true;
         bool wasArmed=armed;
@@ -755,8 +781,6 @@ internal sealed class Shell : Window
     }
     private void SavePreferences(){if(!inspection){preferenceTimer.Stop();preferenceTimer.Start();}}
     private static string Duration(int seconds)=>seconds<60?$"{seconds}s":seconds%60==0?$"{seconds/60}m":$"{seconds/60}m {seconds%60}s";
-    private bool restartPending,restartLoop;
-    private async Task RestartAsync(){if(inspection||quitting)return;restartPending=true;if(changing||restartLoop)return;restartLoop=true;try{while(restartPending&&!quitting){restartPending=false;changing=true;try{await engine.FinishPendingSaveAsync();await engine.StopAsync();}finally{changing=false;}await EnsureReplayAsync();}}finally{restartLoop=false;}}
     private void UpdateAutoResumeTimer()
     {
         autoResumeTimer.Stop();

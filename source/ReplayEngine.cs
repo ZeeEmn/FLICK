@@ -99,7 +99,7 @@ internal sealed class ReplayEngine : IDisposable
         settings=chosen;CurrentMemoryPlan=memory;buffer?.Dispose();buffer=new Mp4ReplayBuffer(memory.VideoBytes){HistorySeconds=chosen.Seconds};
         sessionClock.Restart();videoEpoch=-1;
         audio=new AudioReplay(sessionClock,chosen.Seconds);audio.StateChanged+=()=>AudioChanged?.Invoke();
-        try{audio.SetEnabled(chosen.Desktop,chosen.Mic,chosen.InputId);audio.SetSources(chosen.AudioSources??Array.Empty<AudioSourceSetting>());}catch(Exception e){Report("Audio unavailable: "+e.Message);}
+        try{audio.Configure(chosen.Desktop,chosen.Mic,chosen.InputId,chosen.AudioSources??Array.Empty<AudioSourceSetting>());}catch(Exception e){Report("Audio unavailable: "+e.Message);}
         buffer.Updated+=()=>{if(videoEpoch<0 && buffer.Statistics.Seconds>0){var snap=buffer.TakeSnapshot(1);videoEpoch=sessionClock.Elapsed.TotalSeconds-snap.Origin-snap.Seconds;firstFragment?.TrySetResult();}};
         var launch=new ProcessStartInfo(workerPath){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};
         launch.Environment[DesktopCapture.DisplayEnvironment]=display.DeviceName;
@@ -146,7 +146,6 @@ internal sealed class ReplayEngine : IDisposable
         else DesktopCapture.StopAcquisition(worker);
     }
     public void SetHistory(int seconds){if(Active)throw new InvalidOperationException("Pause replay to change the clip length.");if(buffer is not null)buffer.HistorySeconds=seconds;audio?.SetHistory(seconds);}
-    internal void SetAudioSources(IReadOnlyList<AudioSourceSetting> sources){audio?.SetSources(sources);if(settings is not null)settings=settings with{AudioSources=sources};}
     public void SetAudio(bool desktop,bool mic)
     {
         if(nativeWorker is not null){audio?.SetEnabled(desktop,mic,settings?.InputId);return;}
